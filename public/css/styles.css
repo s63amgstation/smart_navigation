@@ -496,6 +496,19 @@ body.home-active .icon-btn { color: #fff; }
 .fav-item .ico-btn:active { background: rgba(0,0,0,0.06); }
 .fav-item .ico-del:active { color: #b91c1c; }
 
+/* 즐겨찾기 인라인 폼 */
+.fav-form {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f9fbff;
+}
+.fav-form h4 { margin: 0 0 10px; font-size: 14px; }
+.fav-form .form-actions { display: flex; gap: 10px; margin-top: 8px; }
+.fav-form .form-actions .ghost-btn { flex: 0 0 90px; color: #b91c1c; border-color: #f3c9c9; }
+.fav-form .form-actions .primary-btn { flex: 1; margin-top: 0; }
+
 /* 검색 입력에 붙는 즐겨찾기 칩 행 */
 .fav-bar {
   display: flex;

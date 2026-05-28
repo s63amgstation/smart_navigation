@@ -121,7 +121,10 @@
       if (opts.withSave) {
         const cur = placeInput.getValue();
         if (cur && cur.lon != null && cur.lat != null && !Store.findByCoord(cur.lon, cur.lat)) {
-          addChip(row, '⭐ 즐겨찾기 추가', () => openFavModal({ preset: cur })).classList.add('chip-save');
+          addChip(row, '⭐ 즐겨찾기 추가', () => {
+            showView('favs');
+            showFavForm({ preset: cur });
+          }).classList.add('chip-save');
         }
       }
     }
@@ -152,30 +155,36 @@
     if (!PI.m2start.getValue()) PI.m2start.setValue(d);
   })();
 
-  // ── 즐겨찾기 모달 ──────────────────────────────────────
-  const favModal = document.getElementById('favModal');
+  // ── 즐겨찾기 추가/편집 (인라인 폼 — 모달 사용 안 함) ──
+  const favForm = document.getElementById('favForm');
+  const favFormTitle = document.getElementById('favFormTitle');
   const favLabelInput = document.getElementById('favLabel');
   let favPlacePI = null;
-  let favEditing = null; // null=추가, {id,...}=편집
+  let favEditing = null;
 
-  function openFavModal({ preset = null, editing = null } = {}) {
+  function showFavForm({ preset = null, editing = null } = {}) {
     favEditing = editing;
-    document.getElementById('favModalTitle').textContent = editing ? '즐겨찾기 편집' : '즐겨찾기 추가';
+    favFormTitle.textContent = editing ? '즐겨찾기 편집' : '새 즐겨찾기';
     favLabelInput.value = editing?.label || '';
     const placeHolder = document.querySelector('#favPlaceField .place-input');
     favPlacePI = PlaceInput.create(placeHolder, { placeholder: '장소 검색' });
     if (preset) favPlacePI.setValue(preset);
     else if (editing) favPlacePI.setValue({ name: editing.name, lon: editing.lon, lat: editing.lat, address: editing.address || '' });
-    favModal.hidden = false;
-    setTimeout(() => favLabelInput.focus(), 60);
+    favForm.hidden = false;
+    setTimeout(() => { try { favLabelInput.focus(); } catch {} }, 60);
+    favForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
-  function closeFavModal() { favModal.hidden = true; favEditing = null; }
+  function hideFavForm() {
+    favForm.hidden = true;
+    favEditing = null;
+    favPlacePI = null;
+  }
 
   document.getElementById('favAddBtn').addEventListener('click', () => {
     if (Store.list().length >= Store.MAX_FAVS) return toast(`즐겨찾기는 최대 ${Store.MAX_FAVS}개까지`);
-    openFavModal({});
+    showFavForm({});
   });
-  document.getElementById('favCancel').addEventListener('click', closeFavModal);
+  document.getElementById('favCancel').addEventListener('click', hideFavForm);
   document.getElementById('favSave').addEventListener('click', () => {
     const label = favLabelInput.value.trim();
     if (!label) return toast('별칭을 입력하세요');
@@ -189,9 +198,14 @@
       if (!r.ok) return toast(r.error);
       toast('즐겨찾기 추가됨');
     }
-    closeFavModal();
+    hideFavForm();
     renderFavorites();
     refreshAllBars();
+  });
+
+  // 즐겨찾기 화면을 떠나면 폼도 닫기
+  document.querySelectorAll('[data-go="home"], #backBtn').forEach((b) => {
+    b.addEventListener('click', hideFavForm);
   });
 
   // 메인 즐겨찾기 그리드
@@ -222,7 +236,7 @@
         toast('삭제됨');
       }
     } else if (btn.dataset.act === 'edit') {
-      openFavModal({ editing: fav });
+      showFavForm({ editing: fav });
     }
   });
 
