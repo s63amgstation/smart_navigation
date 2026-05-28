@@ -112,20 +112,20 @@
           </div>
           <div class="field">
             <label>시간 <small>(10분 단위)</small></label>
-            <div class="dt-wrap" data-dt-for="m1-time">
-              <input id="m1-time" class="text-input dt-input" type="datetime-local" step="600" />
-              <div class="dt-presets">
-                <button type="button" data-dt="now">지금</button>
-                <button type="button" data-dt="+30m">+30분</button>
-                <button type="button" data-dt="+1h">+1시간</button>
-                <button type="button" data-dt="tmr9">내일 오전 9시</button>
+            <div class="dt-wrap">
+              <div class="dt-display">
+                <span class="dt-d-date">—</span>
+                <span class="dt-d-dot">·</span>
+                <span class="dt-d-time">—</span>
               </div>
+              <input id="m1-time" type="datetime-local" step="600" class="dt-native" aria-label="시간 선택" />
             </div>
           </div>
         </div>
         <button id="m1-run" class="primary-btn">조회 / 최적 경유지 찾기</button>
         <div id="m1-result" class="result"></div>
         <div id="m1-map" class="map" hidden></div>
+        <div id="m1-nav" class="nav-apps" hidden></div>
       </section>
 
       <!-- 메뉴 2 -->
@@ -153,22 +153,40 @@
           </div>
           <div class="field">
             <label>시간 <small>(10분 단위)</small></label>
-            <div class="dt-wrap" data-dt-for="m2-time">
-              <input id="m2-time" class="text-input dt-input" type="datetime-local" step="600" />
-              <div class="dt-presets">
-                <button type="button" data-dt="now">지금</button>
-                <button type="button" data-dt="+30m">+30분</button>
-                <button type="button" data-dt="+1h">+1시간</button>
-                <button type="button" data-dt="tmr9">내일 오전 9시</button>
+            <div class="dt-wrap">
+              <div class="dt-display">
+                <span class="dt-d-date">—</span>
+                <span class="dt-d-dot">·</span>
+                <span class="dt-d-time">—</span>
               </div>
+              <input id="m2-time" type="datetime-local" step="600" class="dt-native" aria-label="시간 선택" />
             </div>
           </div>
         </div>
         <button id="m2-run" class="primary-btn">최적 순서 계산</button>
         <div id="m2-result" class="result"></div>
         <div id="m2-map" class="map" hidden></div>
+        <div id="m2-nav" class="nav-apps" hidden></div>
       </section>
     </main>
+
+    <!-- 검색 기록 (우측 슬라이드 패널) -->
+    <button id="histTab" class="hist-tab" hidden aria-label="검색 기록 열기">
+      <span class="hist-tab-ic">⌛</span>
+      <span class="hist-tab-tx">기록</span>
+    </button>
+    <div id="histBackdrop" class="hist-backdrop" hidden></div>
+    <aside id="histPanel" class="hist-panel" hidden aria-hidden="true">
+      <div class="hist-head">
+        <h3>최근 검색 <span class="muted" id="histCount">0</span></h3>
+        <button id="histClose" class="icon-btn" aria-label="닫기">✕</button>
+      </div>
+      <div id="histEmpty" class="hist-empty">아직 검색 기록이 없어요.</div>
+      <div id="histList" class="hist-list"></div>
+      <div class="hist-foot">
+        <button id="histClearAll" type="button" class="ghost-btn" style="color:#b91c1c">전체 삭제</button>
+      </div>
+    </aside>
 
     <div id="toast" class="toast" hidden></div>
 

@@ -11,6 +11,9 @@
     titleEl.textContent = TITLES[name] || '';
     backBtn.hidden = name === 'home';
     document.body.classList.toggle('home-active', name === 'home');
+    // 기록 탭은 메뉴1/2 에서만 노출
+    const histTabEl = document.getElementById('histTab');
+    if (histTabEl) histTabEl.hidden = !(name === 'menu1' || name === 'menu2');
     window.scrollTo(0, 0);
   }
   document.querySelectorAll('[data-go]').forEach((b) =>
@@ -45,7 +48,65 @@
     return `<span style="color:#b45309;font-weight:600">  +${fmtMinAbs(extraSeconds)} 추가</span>`;
   }
 
-  // ── 시간 입력: 10분 단위 라운딩 + 기본값/프리셋 ─────────
+  // ── 외부 길안내 앱 URL 빌더 ──────────────────────────────
+  // 모두 모바일에서 해당 앱이 설치돼 있어야 열림 (없으면 OS 가 안내)
+  function buildTmapUrl({ start, dest, waypoints = [] }) {
+    const p = new URLSearchParams();
+    if (start) { p.set('rStName', start.name || '출발'); p.set('rStX', start.lon); p.set('rStY', start.lat); }
+    p.set('rGoName', dest.name || '도착'); p.set('rGoX', dest.lon); p.set('rGoY', dest.lat);
+    waypoints.slice(0, 5).forEach((w, i) => {
+      const n = i + 1;
+      p.set(`rV${n}Name`, w.name || `경유${n}`);
+      p.set(`rV${n}X`, w.lon);
+      p.set(`rV${n}Y`, w.lat);
+    });
+    return `tmap://route?${p.toString()}`;
+  }
+  function buildNaverUrl({ start, dest, waypoints = [] }) {
+    const p = new URLSearchParams();
+    if (start) { p.set('slat', start.lat); p.set('slng', start.lon); p.set('sname', start.name || '출발'); }
+    p.set('dlat', dest.lat); p.set('dlng', dest.lon); p.set('dname', dest.name || '도착');
+    waypoints.slice(0, 5).forEach((w, i) => {
+      const n = i + 1;
+      p.set(`v${n}lat`, w.lat); p.set(`v${n}lng`, w.lon); p.set(`v${n}name`, w.name || `경유${n}`);
+    });
+    p.set('appname', location.host || 'com.smartnav.app');
+    return `nmap://route/car?${p.toString()}`;
+  }
+  function buildKakaoUrl({ start, dest, waypoints = [] }) {
+    const p = new URLSearchParams();
+    if (start) p.set('sp', `${start.lat},${start.lon}`);
+    p.set('ep', `${dest.lat},${dest.lon}`);
+    p.set('by', 'car');
+    waypoints.slice(0, 5).forEach((w, i) => {
+      const key = i === 0 ? 'vp' : `vp${i + 1}`;
+      p.set(key, `${w.lat},${w.lon}`);
+    });
+    return `kakaomap://route?${p.toString()}`;
+  }
+  function renderNavApps(container, payload) {
+    container.innerHTML = `
+      <p class="nav-apps-title">선택한 경로 그대로 길안내</p>
+      <div class="nav-apps-row">
+        <a class="nav-app nav-tmap"  href="${buildTmapUrl(payload)}">T맵</a>
+        <a class="nav-app nav-naver" href="${buildNaverUrl(payload)}">네이버</a>
+        <a class="nav-app nav-kakao" href="${buildKakaoUrl(payload)}">카카오맵</a>
+      </div>`;
+    container.hidden = false;
+  }
+
+  // ── 시간 입력: 10분 라운딩 + 한글 포맷 표시 (네이티브 input 은 투명) ──
+  // 현재 시각의 "다음 10분 슬롯" (과거시간 차단용 기준)
+  function localDtCeil(date = new Date(), roundMin = 10) {
+    const d = new Date(date);
+    d.setSeconds(0, 0);
+    const ceil = Math.ceil(d.getMinutes() / roundMin) * roundMin;
+    if (ceil >= 60) { d.setHours(d.getHours() + 1); d.setMinutes(0); }
+    else d.setMinutes(ceil);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  // 사용자 입력을 가장 가까운 10분 슬롯으로 라운딩 (포맷팅용)
   function localDtString(date = new Date(), roundMin = 10) {
     const d = new Date(date);
     d.setSeconds(0, 0);
@@ -53,23 +114,58 @@
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-  function applyDtPreset(input, preset) {
-    const d = new Date();
-    if (preset === '+30m') d.setMinutes(d.getMinutes() + 30);
-    else if (preset === '+1h') d.setHours(d.getHours() + 1);
-    else if (preset === 'tmr9') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
-    input.value = localDtString(d);
+  const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+  function fmtDtPretty(value) {
+    if (!value) return ['—', '—'];
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return ['—', '—'];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dt0 = new Date(d); dt0.setHours(0, 0, 0, 0);
+    const dayDiff = Math.round((dt0 - today) / 86400000);
+    let dateLabel;
+    if (dayDiff === 0)      dateLabel = '오늘';
+    else if (dayDiff === 1) dateLabel = '내일';
+    else if (dayDiff === -1) dateLabel = '어제';
+    else                    dateLabel = `${d.getMonth() + 1}월 ${d.getDate()}일`;
+    const dateFull = `${dateLabel} (${WEEKDAYS[d.getDay()]})`;
+    const h = d.getHours();
+    const ampm = h < 12 ? '오전' : '오후';
+    const h12 = h % 12 || 12;
+    const timeFull = `${ampm} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return [dateFull, timeFull];
   }
-  document.getElementById('m1-time').value = localDtString();
-  document.getElementById('m2-time').value = localDtString();
-  document.querySelectorAll('.dt-wrap').forEach((wrap) => {
-    const inp = wrap.querySelector('.dt-input');
-    wrap.querySelectorAll('[data-dt]').forEach((b) => {
-      b.addEventListener('click', () => applyDtPreset(inp, b.dataset.dt));
-    });
-    // 사용자가 직접 시간 변경 시 10분 단위로 자동 라운딩
-    inp.addEventListener('change', () => { inp.value = localDtString(new Date(inp.value)); });
-  });
+  function bindDtWrap(wrap) {
+    const inp = wrap.querySelector('.dt-native');
+    const dateEl = wrap.querySelector('.dt-d-date');
+    const timeEl = wrap.querySelector('.dt-d-time');
+    function sync() {
+      const [d, t] = fmtDtPretty(inp.value);
+      dateEl.textContent = d;
+      timeEl.textContent = t;
+    }
+    function refreshMin() { inp.min = localDtCeil(); }
+    function ensureFuture() {
+      refreshMin();
+      if (!inp.value) { inp.value = inp.min; return; }
+      // 10분 단위로 라운딩하고 min 보다 작으면 min 으로 끌어올린다
+      let v = localDtString(new Date(inp.value));
+      if (v < inp.min) {
+        toast('과거 시각은 선택할 수 없어요');
+        v = inp.min;
+      }
+      if (v !== inp.value) inp.value = v;
+    }
+    inp.addEventListener('change', () => { ensureFuture(); sync(); });
+    inp.addEventListener('focus', refreshMin);
+    refreshMin();
+    if (!inp.value) inp.value = inp.min;
+    sync();
+  }
+  // 기본값을 "다음 10분 슬롯"으로 채우고 wrap 바인딩 (과거 시각 차단)
+  document.getElementById('m1-time').value = localDtCeil();
+  document.getElementById('m2-time').value = localDtCeil();
+  document.querySelectorAll('.dt-wrap').forEach(bindDtWrap);
 
   // ── 현재 위치 ───────────────────────────────────────────
   function useCurrentLocation(placeInput) {
@@ -255,11 +351,15 @@
   let m1State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m1ResultEl = document.getElementById('m1-result');
   const m1MapEl = document.getElementById('m1-map');
+  const m1NavEl = document.getElementById('m1-nav');
   const m1MapHome = m1MapEl.parentElement;
+  const m1NavHome = m1NavEl.parentElement;
 
   function m1MoveMapUnder(card) {
     if (!card || !m1MapEl) return;
     if (card.nextElementSibling !== m1MapEl) card.after(m1MapEl);
+    // nav 버튼은 항상 지도 바로 뒤에 따라붙는다
+    if (m1MapEl.nextElementSibling !== m1NavEl) m1MapEl.after(m1NavEl);
   }
   function m1DrawSelected(idx) {
     const r = m1State.results[idx];
@@ -274,6 +374,11 @@
     if (r.poi) markers.push({ lon: r.poi.lon, lat: r.poi.lat, label: '경유', role: 'via' });
     markers.push({ lon: m1State.dest.lon, lat: m1State.dest.lat, label: '도착', role: 'end' });
     MapView.draw('m1-map', { mapKey: cfg.mapKey, path: r.path, markers });
+    renderNavApps(m1NavEl, {
+      start: m1State.start,
+      dest: m1State.dest,
+      waypoints: r.poi ? [r.poi] : [],
+    });
   }
   m1ResultEl.addEventListener('click', (e) => {
     const card = e.target.closest('.res-card[data-idx]');
@@ -287,10 +392,15 @@
     const keyword = m1kw.value.trim();
     if (!start || !dest) return toast('출발지와 도착지를 선택하세요');
 
+    // 검색 기록 저장 (시간 제외)
+    Store.histAdd({ kind: 'menu1', start, dest, keyword, predictionType: document.getElementById('m1-ptype').value });
+
     const btn = document.getElementById('m1-run');
     btn.disabled = true;
     if (m1MapEl.parentElement !== m1MapHome) m1MapHome.appendChild(m1MapEl);
+    if (m1NavEl.parentElement !== m1NavHome) m1NavHome.appendChild(m1NavEl);
     m1MapEl.hidden = true;
+    m1NavEl.hidden = true;
     m1ResultEl.innerHTML = '';
     const time = document.getElementById('m1-time').value;
     const predictionType = document.getElementById('m1-ptype').value;
@@ -391,11 +501,14 @@
   let m2State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m2ResultEl = document.getElementById('m2-result');
   const m2MapEl = document.getElementById('m2-map');
+  const m2NavEl = document.getElementById('m2-nav');
   const m2MapHome = m2MapEl.parentElement;
+  const m2NavHome = m2NavEl.parentElement;
 
   function m2MoveMapUnder(card) {
     if (!card || !m2MapEl) return;
     if (card.nextElementSibling !== m2MapEl) card.after(m2MapEl);
+    if (m2MapEl.nextElementSibling !== m2NavEl) m2MapEl.after(m2NavEl);
   }
   function m2DrawSelected(idx) {
     const r = m2State.results[idx];
@@ -415,6 +528,11 @@
         { lon: m2State.dest.lon, lat: m2State.dest.lat, label: '도착', role: 'end' },
       ],
     });
+    renderNavApps(m2NavEl, {
+      start: m2State.start,
+      dest: m2State.dest,
+      waypoints: r.order,
+    });
   }
   m2ResultEl.addEventListener('click', (e) => {
     const card = e.target.closest('.res-card[data-idx]');
@@ -431,11 +549,16 @@
     if (!start || !dest) return toast('출발지와 도착지를 선택하세요');
     if (!waypoints.length) return toast('경유지를 1개 이상 선택하세요');
 
+    // 검색 기록 저장
+    Store.histAdd({ kind: 'menu2', start, dest, waypoints, predictionType: document.getElementById('m2-ptype').value });
+
     const btn = document.getElementById('m2-run');
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span>${factorial(waypoints.length)}가지 순서 비교 중…`;
     if (m2MapEl.parentElement !== m2MapHome) m2MapHome.appendChild(m2MapEl);
+    if (m2NavEl.parentElement !== m2NavHome) m2NavHome.appendChild(m2NavEl);
     m2MapEl.hidden = true;
+    m2NavEl.hidden = true;
     m2ResultEl.innerHTML = '';
     try {
       const { results, best, combinations } = await Api.optimize({
@@ -476,6 +599,117 @@
       btn.textContent = '최적 순서 계산';
     }
   });
+
+  // ── 검색 기록 패널 ──────────────────────────────────────
+  const histPanel = document.getElementById('histPanel');
+  const histBackdrop = document.getElementById('histBackdrop');
+  const histListEl = document.getElementById('histList');
+  const histEmptyEl = document.getElementById('histEmpty');
+  const histCountEl = document.getElementById('histCount');
+
+  function openHistPanel() {
+    renderHistory();
+    histPanel.hidden = false;
+    histBackdrop.hidden = false;
+    histPanel.setAttribute('aria-hidden', 'false');
+  }
+  function closeHistPanel() {
+    histPanel.hidden = true;
+    histBackdrop.hidden = true;
+    histPanel.setAttribute('aria-hidden', 'true');
+  }
+  document.getElementById('histTab').addEventListener('click', openHistPanel);
+  document.getElementById('histClose').addEventListener('click', closeHistPanel);
+  histBackdrop.addEventListener('click', closeHistPanel);
+  document.getElementById('histClearAll').addEventListener('click', () => {
+    if (!Store.histList().length) return;
+    if (!confirm('모든 검색 기록을 삭제할까요?')) return;
+    Store.histClear();
+    renderHistory();
+    toast('기록 삭제됨');
+  });
+
+  function tsLabel(ts) {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const pad = (n) => String(n).padStart(2, '0');
+    if (sameDay) return `오늘 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function renderHistory() {
+    const entries = Store.histList();
+    histCountEl.textContent = entries.length;
+    histEmptyEl.style.display = entries.length === 0 ? 'block' : 'none';
+    histListEl.style.display = entries.length === 0 ? 'none' : 'block';
+    histListEl.innerHTML = entries.map((e) => {
+      let summary;
+      if (e.kind === 'menu1') {
+        summary = `${escapeHtml(e.start.name)} → ${escapeHtml(e.dest.name)}`;
+        if (e.keyword) summary += ` <span style="color:var(--muted)">· "${escapeHtml(e.keyword)}"</span>`;
+      } else {
+        const wps = e.waypoints.map((w) => escapeHtml(w.name)).join(' → ');
+        summary = `${escapeHtml(e.start.name)} → ${wps} → ${escapeHtml(e.dest.name)}`;
+      }
+      const kindLabel = e.kind === 'menu1' ? '📍 경유지 시간 비교' : '🔀 멀티 경유지 최적화';
+      return `<div class="hist-item" data-id="${e.id}">
+        <div class="h-kind">${kindLabel}</div>
+        <div class="h-summary">${summary}</div>
+        <div class="h-ts">${tsLabel(e.ts)}</div>
+        <div class="h-actions">
+          <button class="h-apply" data-act="apply">다시 검색</button>
+          <button class="h-del" data-act="del" aria-label="삭제">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+  histListEl.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    const id = btn.closest('.hist-item')?.dataset.id;
+    const e = Store.histList().find((x) => x.id === id);
+    if (!e) return;
+    if (btn.dataset.act === 'del') { Store.histRemove(id); renderHistory(); return; }
+    if (btn.dataset.act === 'apply') applyHistory(e);
+  });
+
+  // dt-wrap 의 한글 표시를 강제로 다시 그리는 헬퍼
+  function refreshAllDtDisplays() {
+    document.querySelectorAll('.dt-wrap').forEach((w) => {
+      const inp = w.querySelector('.dt-native');
+      if (inp) inp.dispatchEvent(new Event('change'));
+    });
+  }
+
+  function applyHistory(e) {
+    closeHistPanel();
+    if (e.kind === 'menu1') {
+      showView('menu1');
+      PI.start.setValue(e.start);
+      PI.dest.setValue(e.dest);
+      m1kw.value = e.keyword || '';
+      document.getElementById('m1-ptype').value = e.predictionType || 'departure';
+      document.getElementById('m1-time').value = localDtCeil();
+    } else {
+      showView('menu2');
+      PI.m2start.setValue(e.start);
+      PI.m2dest.setValue(e.dest);
+      // 기존 경유지 입력 모두 제거 후 새로 추가
+      while (wpInputs.length) {
+        const ref = wpInputs.pop();
+        if (ref.row.parentElement) ref.row.parentElement.removeChild(ref.row);
+      }
+      e.waypoints.forEach((w) => {
+        addWaypoint();
+        const last = wpInputs[wpInputs.length - 1];
+        last.pi.setValue(w);
+      });
+      document.getElementById('m2-ptype').value = e.predictionType || 'departure';
+      document.getElementById('m2-time').value = localDtCeil();
+    }
+    refreshAllDtDisplays();
+    toast('이전 검색을 가져왔어요 (시간은 현재로 초기화)');
+  }
 
   // ── 부팅 ────────────────────────────────────────────────
   (async function boot() {

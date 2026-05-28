@@ -68,5 +68,32 @@ window.Store = (function () {
       const all = readFavs();
       return all.find((f) => f.label === '집') || all[0] || null;
     },
+
+    // ── 검색 기록 (최대 10개) ──────────────────────────
+    histList() { return readHist(); },
+    histAdd(entry) {
+      const e = { ...entry, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now() };
+      const k = histKey(e);
+      const all = readHist().filter((x) => histKey(x) !== k);
+      all.unshift(e);
+      writeHist(all);
+      return e;
+    },
+    histRemove(id) { writeHist(readHist().filter((e) => e.id !== id)); },
+    histClear() { writeHist([]); },
   };
+
+  // 검색 기록 보조
+  const HIST = 'sn.hist';
+  const MAX_HIST = 10;
+  function readHist() {
+    try { return JSON.parse(localStorage.getItem(HIST) || '[]'); } catch { return []; }
+  }
+  function writeHist(arr) { localStorage.setItem(HIST, JSON.stringify(arr.slice(0, MAX_HIST))); }
+  function histKey(e) {
+    const c = (p) => `${Number(p.lon).toFixed(4)},${Number(p.lat).toFixed(4)}`;
+    if (e.kind === 'menu1') return `m1|${c(e.start)}|${c(e.dest)}|${e.keyword || ''}`;
+    const wp = (e.waypoints || []).map(c).sort().join(';');
+    return `m2|${c(e.start)}|${c(e.dest)}|${wp}`;
+  }
 })();
