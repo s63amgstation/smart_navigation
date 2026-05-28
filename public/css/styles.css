@@ -269,3 +269,290 @@ select.text-input { appearance: none; }
   z-index: 100;
   max-width: 90%;
 }
+
+/* ─── 풀스크린 날씨 배경 (홈 전용) ────────────────────── */
+/* body.home-active 일 때만 보인다. 다른 화면에선 display:none. */
+.weather-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  display: none;
+}
+body.home-active .weather-bg { display: block; }
+
+/* 홈에서는 헤더/메인 배경을 투명하게 만들어 배경이 보이게 한다 */
+body.home-active { background: transparent; }
+body.home-active .appbar {
+  background: transparent;
+  border-bottom: 0;
+  color: #fff;
+}
+body.home-active .appbar h1 { visibility: hidden; }
+body.home-active .icon-btn { color: #fff; }
+
+/* 홈 화면 자체: #app 의 padding/max-width 를 깨고 전체를 차지 */
+.view.home-screen {
+  display: none;
+  margin: -12px -16px calc(-32px - env(safe-area-inset-bottom));
+  position: relative;
+  min-height: calc(100vh - 52px - env(safe-area-inset-top));
+  overflow: hidden;
+  color: #fff;
+  flex-direction: column;
+}
+.view.home-screen.active { display: flex; }
+
+.home-screen .home-top {
+  padding: 22px 24px 0;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+.home-screen .home-top .welcome-info {
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  opacity: 0.96;
+  margin-bottom: 12px;
+  letter-spacing: -0.1px;
+}
+.home-screen .home-top .w-dot { opacity: 0.55; }
+.home-screen .home-top .w-temp { font-weight: 700; font-size: 16px; }
+.home-screen .home-top .welcome-greeting {
+  margin: 0 0 6px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.7px;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+.home-screen .home-top .welcome-sub {
+  margin: 0;
+  font-size: 16px;
+  opacity: 0.92;
+  font-weight: 500;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
+}
+
+.home-screen .home-menus {
+  margin-top: auto;
+  padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+/* 글래스 메뉴 카드 */
+.menu-card.glass {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  margin: 0;
+}
+.menu-card.glass .menu-text strong { color: #fff; }
+.menu-card.glass .menu-text span { color: rgba(255, 255, 255, 0.82); }
+.menu-card.glass .chev { color: rgba(255, 255, 255, 0.85); }
+.weather-bg.sunny       { background: linear-gradient(135deg, #ffb866 0%, #ff8a3d 50%, #ff6b6b 100%); }
+.weather-bg.cloudy      { background: linear-gradient(135deg, #7593b5 0%, #50708e 100%); }
+.weather-bg.rain        { background: linear-gradient(135deg, #4a6a7d 0%, #2a3e4d 100%); }
+.weather-bg.snow        { background: linear-gradient(135deg, #bcd2e3 0%, #6d8ba6 100%); }
+.weather-bg.storm       { background: linear-gradient(135deg, #404a5c 0%, #1c2230 100%); }
+.weather-bg.clear-night { background: linear-gradient(135deg, #142048 0%, #2a1c4a 60%, #1a0f33 100%); }
+.weather-bg.cloudy-night{ background: linear-gradient(135deg, #28324a 0%, #1a1f30 100%); }
+.weather-bg.rain-night  { background: linear-gradient(135deg, #2a3548 0%, #131a26 100%); }
+
+/* 해 */
+.weather-bg .sun {
+  position: absolute;
+  top: 30px; right: -40px;
+  width: 220px; height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff5d6 0%, #ffd97a 45%, transparent 70%);
+  animation: sun-pulse 5s ease-in-out infinite;
+}
+@keyframes sun-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50%      { transform: scale(1.08); opacity: 1; }
+}
+/* 달 */
+.weather-bg .moon {
+  position: absolute;
+  top: 60px; right: 36px;
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff 0%, #e7e3d2 70%, #c8c2a8 100%);
+  box-shadow: 0 0 36px rgba(255, 250, 220, 0.55);
+}
+/* 별 */
+.weather-bg .star {
+  position: absolute;
+  width: 2px; height: 2px;
+  background: #fff;
+  border-radius: 50%;
+  animation: twinkle 2.4s ease-in-out infinite;
+  box-shadow: 0 0 3px rgba(255,255,255,0.8);
+}
+@keyframes twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 1; transform: scale(1.2); }
+}
+/* 빗방울 */
+.weather-bg .drop {
+  position: absolute;
+  top: -5vh;
+  width: 2px; height: 16px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(200,220,255,0.75));
+  border-radius: 1px;
+  animation: rain-fall linear infinite;
+}
+@keyframes rain-fall {
+  0%   { transform: translateY(0); opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateY(110vh); opacity: 0.3; }
+}
+/* 눈송이 */
+.weather-bg .flake {
+  position: absolute;
+  top: -5vh;
+  font-size: 14px;
+  color: rgba(255,255,255,0.92);
+  animation: snow-fall linear infinite;
+  text-shadow: 0 0 6px rgba(255,255,255,0.4);
+}
+@keyframes snow-fall {
+  0%   { transform: translateY(0) translateX(0); opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateY(110vh) translateX(30px); opacity: 0.5; }
+}
+/* 구름 */
+.weather-bg .cloud {
+  position: absolute;
+  left: -150px;
+  width: 130px; height: 36px;
+  background: rgba(255,255,255,0.72);
+  border-radius: 30px;
+  box-shadow: 36px 8px 0 -2px rgba(255,255,255,0.62), 64px -8px 0 -4px rgba(255,255,255,0.55);
+  animation: cloud-drift linear infinite;
+}
+@keyframes cloud-drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(100vw + 200px)); }
+}
+
+/* ─── 즐겨찾기 섹션 ───────────────────────────────────── */
+.fav-section {
+  margin-top: 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 14px 12px;
+  box-shadow: var(--shadow);
+}
+.fav-header { display: flex; justify-content: space-between; align-items: center; }
+.fav-header h3 { margin: 0; font-size: 15px; }
+.fav-header .muted { color: var(--muted); font-weight: 500; font-size: 12px; margin-left: 4px; }
+.fav-add-btn { width: auto; height: 36px; padding: 0 14px; }
+.fav-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.fav-grid:empty::before {
+  content: '아직 즐겨찾기가 없어요';
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.fav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f1f5fb;
+  border: 1px solid #d8e3ef;
+  border-radius: 999px;
+  padding: 6px 6px 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fav-item .lbl { color: var(--text); }
+.fav-item .ico-btn {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.fav-item .ico-btn:active { background: rgba(0,0,0,0.06); }
+.fav-item .ico-del:active { color: #b91c1c; }
+
+/* 검색 입력에 붙는 즐겨찾기 칩 행 */
+.fav-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.fav-bar .chip {
+  font-size: 12.5px;
+  padding: 6px 11px;
+  background: #f1f5fb;
+  border-color: #d8e3ef;
+}
+.fav-bar .chip-cur {
+  background: #e8f5ee;
+  border-color: #bfe3ce;
+  color: #15803d;
+}
+.fav-bar .chip-save {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #b45309;
+}
+
+/* ─── 날짜/시간 픽커 ─────────────────────────────────── */
+.dt-wrap {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 10px 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
+}
+.dt-input.text-input {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  padding: 6px 4px;
+  height: 38px;
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+.dt-input.text-input:focus { outline: none; box-shadow: 0 0 0 2px var(--primary) inset; border-radius: 8px; }
+.dt-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.dt-presets button {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.dt-presets button:active { background: var(--bg); border-color: var(--primary); color: var(--primary); }

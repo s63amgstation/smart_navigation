@@ -11,6 +11,9 @@
     <script src="https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=__TMAP_KEY__"></script>
   </head>
   <body>
+    <!-- 전역 배경: 홈에서만 노출 (body.home-active 가 켜질 때) -->
+    <div class="weather-bg" id="weatherBg"></div>
+
     <!-- 상단 바 -->
     <header class="appbar">
       <button id="backBtn" class="icon-btn" hidden aria-label="뒤로">‹</button>
@@ -19,27 +22,51 @@
     </header>
 
     <main id="app">
-      <!-- 홈 -->
-      <section data-view="home" class="view active">
-        <div class="home-hero">
-          <p class="home-sub">가는 길에 들를 곳, 똑똑하게</p>
+      <!-- 홈 — 풀스크린 날씨 배경 + 상단 인사 + 하단 메뉴 3개 -->
+      <section data-view="home" class="view home-screen active">
+        <div class="home-top">
+          <div class="welcome-info" id="welcomeInfo"></div>
+          <h2 class="welcome-greeting" id="welcomeGreeting">안녕하세요</h2>
+          <p class="welcome-sub">어디로 가시나요?</p>
         </div>
-        <button class="menu-card" data-go="menu1">
-          <div class="menu-emoji">📍</div>
-          <div class="menu-text">
-            <strong>최소 경유지 찾기</strong>
-            <span>A→B 가는 길에 가장 덜 돌아가는 곳 찾기</span>
+        <div class="home-menus">
+          <button class="menu-card glass" data-go="menu1">
+            <div class="menu-emoji">📍</div>
+            <div class="menu-text">
+              <strong>경유지 시간 비교</strong>
+              <span>가는 길에 들를 곳 / 직접 경로만</span>
+            </div>
+            <span class="chev">›</span>
+          </button>
+          <button class="menu-card glass" data-go="menu2">
+            <div class="menu-emoji">🔀</div>
+            <div class="menu-text">
+              <strong>멀티 경유지 최적화</strong>
+              <span>여러 곳을 들를 때 가장 빠른 순서</span>
+            </div>
+            <span class="chev">›</span>
+          </button>
+          <button class="menu-card glass" data-go="favs">
+            <div class="menu-emoji">⭐</div>
+            <div class="menu-text">
+              <strong>즐겨찾기 등록</strong>
+              <span>집·회사 등 자주 가는 곳</span>
+            </div>
+            <span class="chev">›</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- 즐겨찾기 관리 (별도 화면) -->
+      <section data-view="favs" class="view">
+        <div class="fav-section">
+          <div class="fav-header">
+            <h3>즐겨찾기 <span class="muted" id="favCount">0/10</span></h3>
+            <button id="favAddBtn" class="ghost-btn fav-add-btn">+ 추가</button>
           </div>
-          <span class="chev">›</span>
-        </button>
-        <button class="menu-card" data-go="menu2">
-          <div class="menu-emoji">🔀</div>
-          <div class="menu-text">
-            <strong>멀티 경유지 최적화</strong>
-            <span>여러 곳을 들를 때 가장 빠른 순서 찾기</span>
-          </div>
-          <span class="chev">›</span>
-        </button>
+          <div class="fav-grid" id="favGrid"></div>
+          <p class="hint">여기서 등록한 장소는 모든 검색 입력에서 한 번 탭으로 들어갑니다.</p>
+        </div>
       </section>
 
       <!-- 메뉴 1 -->
@@ -53,8 +80,8 @@
           <div class="place-input" data-role="dest"></div>
         </div>
         <div class="field">
-          <label>찾을 장소</label>
-          <input id="m1-keyword" class="text-input" placeholder="예: 스타벅스, 주유소, 약국" />
+          <label>찾을 장소 <small>(비우면 직접 경로만 조회)</small></label>
+          <input id="m1-keyword" class="text-input" placeholder="예: 스타벅스, 주유소 — 비워도 됩니다" />
           <div class="chips" id="m1-chips"></div>
         </div>
         <div class="field-row">
@@ -66,11 +93,19 @@
             </select>
           </div>
           <div class="field">
-            <label>시간</label>
-            <input id="m1-time" class="text-input" type="datetime-local" />
+            <label>시간 <small>(10분 단위)</small></label>
+            <div class="dt-wrap" data-dt-for="m1-time">
+              <input id="m1-time" class="text-input dt-input" type="datetime-local" step="600" />
+              <div class="dt-presets">
+                <button type="button" data-dt="now">지금</button>
+                <button type="button" data-dt="+30m">+30분</button>
+                <button type="button" data-dt="+1h">+1시간</button>
+                <button type="button" data-dt="tmr9">내일 오전 9시</button>
+              </div>
+            </div>
           </div>
         </div>
-        <button id="m1-run" class="primary-btn">최적 경유지 찾기</button>
+        <button id="m1-run" class="primary-btn">조회 / 최적 경유지 찾기</button>
         <div id="m1-result" class="result"></div>
         <div id="m1-map" class="map" hidden></div>
       </section>
@@ -99,8 +134,16 @@
             </select>
           </div>
           <div class="field">
-            <label>시간</label>
-            <input id="m2-time" class="text-input" type="datetime-local" />
+            <label>시간 <small>(10분 단위)</small></label>
+            <div class="dt-wrap" data-dt-for="m2-time">
+              <input id="m2-time" class="text-input dt-input" type="datetime-local" step="600" />
+              <div class="dt-presets">
+                <button type="button" data-dt="now">지금</button>
+                <button type="button" data-dt="+30m">+30분</button>
+                <button type="button" data-dt="+1h">+1시간</button>
+                <button type="button" data-dt="tmr9">내일 오전 9시</button>
+              </div>
+            </div>
           </div>
         </div>
         <button id="m2-run" class="primary-btn">최적 순서 계산</button>
@@ -109,9 +152,29 @@
       </section>
     </main>
 
+    <!-- 즐겨찾기 추가/편집 모달 -->
+    <div id="favModal" class="modal" hidden>
+      <div class="modal-card">
+        <h2 id="favModalTitle">즐겨찾기 추가</h2>
+        <div class="field">
+          <label>별칭 <small>(예: 집, 회사, 학교)</small></label>
+          <input id="favLabel" class="text-input" maxlength="20" placeholder="별칭" />
+        </div>
+        <div class="field" id="favPlaceField">
+          <label>장소</label>
+          <div class="place-input" data-role="fav"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="favCancel" class="ghost-btn">취소</button>
+          <button id="favSave" class="primary-btn">저장</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast" hidden></div>
 
     <script src="./js/storage.js"></script>
+    <script src="./js/weather.js"></script>
     <script src="./js/api.js"></script>
     <script src="./js/map.js"></script>
     <script src="./js/place-input.js"></script>

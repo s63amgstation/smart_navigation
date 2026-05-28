@@ -3,13 +3,14 @@
   const views = [...document.querySelectorAll('.view')];
   const titleEl = document.getElementById('title');
   const backBtn = document.getElementById('backBtn');
-  const TITLES = { home: '스마트 길찾기', menu1: '최소 경유지 찾기', menu2: '멀티 경유지 최적화' };
+  const TITLES = { home: '', menu1: '경유지 시간 비교', menu2: '멀티 경유지 최적화', favs: '즐겨찾기' };
 
   // ── 라우팅 ──────────────────────────────────────────────
   function showView(name) {
     views.forEach((v) => v.classList.toggle('active', v.dataset.view === name));
-    titleEl.textContent = TITLES[name] || '스마트 길찾기';
+    titleEl.textContent = TITLES[name] || '';
     backBtn.hidden = name === 'home';
+    document.body.classList.toggle('home-active', name === 'home');
     window.scrollTo(0, 0);
   }
   document.querySelectorAll('[data-go]').forEach((b) =>
@@ -27,75 +28,73 @@
     toastTimer = setTimeout(() => (t.hidden = true), 2600);
   }
 
-  // ── 시간 입력 기본값 = 지금 ──────────────────────────────
-  function nowLocal() {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
+  // ── 공통 ────────────────────────────────────────────────
+  const km = (m) => (m == null ? '-' : (m / 1000).toFixed(1) + 'km');
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
-  document.getElementById('m1-time').value = nowLocal();
-  document.getElementById('m2-time').value = nowLocal();
+  function fmtMinAbs(seconds) {
+    const m = Math.round(Math.abs(seconds) / 60);
+    if (m < 60) return `${m}분`;
+    return `${Math.floor(m / 60)}시간 ${m % 60}분`;
+  }
+  function extraBadgeHtml(extraSeconds) {
+    if (extraSeconds == null) return '';
+    const m = Math.round(extraSeconds / 60);
+    if (m < 1) return `<span style="color:#6b7280;font-weight:600">  ≈ 거의 동일</span>`;
+    return `<span style="color:#b45309;font-weight:600">  +${fmtMinAbs(extraSeconds)} 추가</span>`;
+  }
 
-  // ── 현재 위치 가져오기 ─────────────────────────────────
+  // ── 시간 입력: 10분 단위 라운딩 + 기본값/프리셋 ─────────
+  function localDtString(date = new Date(), roundMin = 10) {
+    const d = new Date(date);
+    d.setSeconds(0, 0);
+    d.setMinutes(Math.round(d.getMinutes() / roundMin) * roundMin);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function applyDtPreset(input, preset) {
+    const d = new Date();
+    if (preset === '+30m') d.setMinutes(d.getMinutes() + 30);
+    else if (preset === '+1h') d.setHours(d.getHours() + 1);
+    else if (preset === 'tmr9') { d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); }
+    input.value = localDtString(d);
+  }
+  document.getElementById('m1-time').value = localDtString();
+  document.getElementById('m2-time').value = localDtString();
+  document.querySelectorAll('.dt-wrap').forEach((wrap) => {
+    const inp = wrap.querySelector('.dt-input');
+    wrap.querySelectorAll('[data-dt]').forEach((b) => {
+      b.addEventListener('click', () => applyDtPreset(inp, b.dataset.dt));
+    });
+    // 사용자가 직접 시간 변경 시 10분 단위로 자동 라운딩
+    inp.addEventListener('change', () => { inp.value = localDtString(new Date(inp.value)); });
+  });
+
+  // ── 현재 위치 ───────────────────────────────────────────
   function useCurrentLocation(placeInput) {
     if (!navigator.geolocation) return toast('이 브라우저는 위치 정보를 지원하지 않습니다');
     toast('현재 위치 확인 중…');
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        placeInput.setValue({ name: '📍 내 현재 위치', lon, lat, address: '' });
-      },
+      (pos) => placeInput.setValue({ name: '📍 내 현재 위치', lon: pos.coords.longitude, lat: pos.coords.latitude, address: '' }),
       (err) => {
-        const m = {
-          1: '위치 권한이 거부됨. iPhone: 설정 > Safari > 위치 → 허용으로 바꿔주세요.',
-          2: '현재 위치를 확인할 수 없습니다.',
-          3: '위치 확인 시간 초과',
-        };
-        toast(m[err.code] || '위치 확인 실패: ' + err.message);
+        const m = { 1: '위치 권한이 거부됨. iPhone: 설정 > Safari > 위치 → 허용', 2: '현재 위치 확인 불가', 3: '위치 확인 시간 초과' };
+        toast(m[err.code] || '위치 확인 실패');
       },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60_000 },
     );
   }
 
-  // ── 출발지 칩(현위치/집/집으로 저장) ─────────────────────
-  function attachStartHelpers(placeInput, holderEl) {
-    const row = document.createElement('div');
-    row.className = 'quick-fill';
-    holderEl.parentElement.insertBefore(row, holderEl.nextSibling);
-
-    function render() {
-      row.innerHTML = '';
-      // 📍 현위치
-      addChip(row, '📍 현위치', () => useCurrentLocation(placeInput));
-      // 🏠 집 (저장돼 있을 때만)
-      const home = Store.getHome();
-      if (home) {
-        addChip(row, '🏠 집', () => placeInput.setValue(home), home.name);
-        addChip(row, '✕', () => {
-          if (confirm('저장된 집주소를 삭제할까요?')) {
-            Store.clearHome();
-            toast('집주소 삭제됨');
-            allRenders.forEach((r) => r()); // 다른 입력의 칩도 동기화
-          }
-        }, '집주소 해제').classList.add('chip-mini');
-      }
-      // 💾 현재 출발지를 집으로 저장 (값이 있고, 저장된 집과 다를 때만)
-      const cur = placeInput.getValue();
-      if (cur && cur.lon != null && cur.lat != null) {
-        const same = home && Math.abs(cur.lon - home.lon) < 1e-4 && Math.abs(cur.lat - home.lat) < 1e-4;
-        if (!same) {
-          addChip(row, '💾 이 위치를 집으로', () => {
-            Store.setHome(cur);
-            toast('집주소로 저장됨');
-            allRenders.forEach((r) => r());
-          }).classList.add('chip-save');
-        }
-      }
-    }
-    allRenders.push(render);
-    return { render };
+  // ── 즐겨찾기 칩 행 (모든 검색 입력 아래에 붙음) ─────────
+  function iconOf(label) {
+    const s = String(label || '');
+    if (s.includes('집')) return '🏠';
+    if (s.includes('회사')) return '🏢';
+    if (s.includes('학교')) return '📚';
+    if (s.includes('병원')) return '🏥';
+    if (s.includes('카페') || s.includes('스타벅스')) return '☕';
+    return '⭐';
   }
-
   function addChip(parent, text, onClick, title) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -106,66 +105,148 @@
     parent.appendChild(b);
     return b;
   }
+  const allRenders = []; // 즐겨찾기 변화 시 모든 칩행을 동시에 갱신
+  function attachFavoritesBar(placeInput, holderEl, opts = {}) {
+    const row = document.createElement('div');
+    row.className = 'fav-bar';
+    holderEl.parentElement.insertBefore(row, holderEl.nextSibling);
+    function render() {
+      row.innerHTML = '';
+      if (opts.withCurrent) {
+        addChip(row, '📍 현위치', () => useCurrentLocation(placeInput)).classList.add('chip-cur');
+      }
+      Store.list().forEach((f) => {
+        addChip(row, `${iconOf(f.label)} ${f.label}`, () => placeInput.setValue(f), f.name);
+      });
+      if (opts.withSave) {
+        const cur = placeInput.getValue();
+        if (cur && cur.lon != null && cur.lat != null && !Store.findByCoord(cur.lon, cur.lat)) {
+          addChip(row, '⭐ 즐겨찾기 추가', () => openFavModal({ preset: cur })).classList.add('chip-save');
+        }
+      }
+    }
+    allRenders.push(render);
+    return { render };
+  }
+  function refreshAllBars() { allRenders.forEach((r) => r()); }
 
-  const allRenders = []; // 두 출발지 입력의 칩들을 동시에 갱신할 때 사용
-
-  // ── 장소 입력 인스턴스 ──────────────────────────────────
+  // ── 장소 입력 인스턴스 (모두 즐겨찾기 칩 바 부착) ────────
   const PI = {};
-  function makeStart(role, placeholder) {
+  function makeInput(role, placeholder, barOpts) {
     const holder = document.querySelector(`[data-role="${role}"]`);
     let helpers;
     const pi = PlaceInput.create(holder, { placeholder, onChange: () => helpers?.render() });
-    helpers = attachStartHelpers(pi, holder);
+    helpers = attachFavoritesBar(pi, holder, barOpts);
     return pi;
   }
-  PI.start = makeStart('start', '출발지 검색');
-  PI.dest = PlaceInput.create(document.querySelector('[data-role="dest"]'), { placeholder: '도착지 검색' });
-  PI.m2start = makeStart('m2start', '출발지 검색');
-  PI.m2dest = PlaceInput.create(document.querySelector('[data-role="m2dest"]'), { placeholder: '도착지 검색' });
+  PI.start   = makeInput('start',   '출발지 검색', { withCurrent: true,  withSave: true });
+  PI.dest    = makeInput('dest',    '도착지 검색', { withCurrent: false, withSave: true });
+  PI.m2start = makeInput('m2start', '출발지 검색', { withCurrent: true,  withSave: true });
+  PI.m2dest  = makeInput('m2dest',  '도착지 검색', { withCurrent: false, withSave: true });
 
-  // ── 카테고리 칩 (메뉴1) ─────────────────────────────────
+  // 진입 시 기본 출발지 = "집" 즐겨찾기(없으면 첫 즐겨찾기)
+  (function applyDefaultStart() {
+    const d = Store.defaultStart();
+    if (!d) return;
+    if (!PI.start.getValue()) PI.start.setValue(d);
+    if (!PI.m2start.getValue()) PI.m2start.setValue(d);
+  })();
+
+  // ── 즐겨찾기 모달 ──────────────────────────────────────
+  const favModal = document.getElementById('favModal');
+  const favLabelInput = document.getElementById('favLabel');
+  let favPlacePI = null;
+  let favEditing = null; // null=추가, {id,...}=편집
+
+  function openFavModal({ preset = null, editing = null } = {}) {
+    favEditing = editing;
+    document.getElementById('favModalTitle').textContent = editing ? '즐겨찾기 편집' : '즐겨찾기 추가';
+    favLabelInput.value = editing?.label || '';
+    const placeHolder = document.querySelector('#favPlaceField .place-input');
+    favPlacePI = PlaceInput.create(placeHolder, { placeholder: '장소 검색' });
+    if (preset) favPlacePI.setValue(preset);
+    else if (editing) favPlacePI.setValue({ name: editing.name, lon: editing.lon, lat: editing.lat, address: editing.address || '' });
+    favModal.hidden = false;
+    setTimeout(() => favLabelInput.focus(), 60);
+  }
+  function closeFavModal() { favModal.hidden = true; favEditing = null; }
+
+  document.getElementById('favAddBtn').addEventListener('click', () => {
+    if (Store.list().length >= Store.MAX_FAVS) return toast(`즐겨찾기는 최대 ${Store.MAX_FAVS}개까지`);
+    openFavModal({});
+  });
+  document.getElementById('favCancel').addEventListener('click', closeFavModal);
+  document.getElementById('favSave').addEventListener('click', () => {
+    const label = favLabelInput.value.trim();
+    if (!label) return toast('별칭을 입력하세요');
+    const place = favPlacePI?.getValue();
+    if (!place) return toast('장소를 검색해 선택하세요');
+    if (favEditing) {
+      Store.update(favEditing.id, { label, name: place.name, lon: place.lon, lat: place.lat, address: place.address || '' });
+      toast('즐겨찾기 수정됨');
+    } else {
+      const r = Store.add({ label, name: place.name, lon: place.lon, lat: place.lat, address: place.address || '' });
+      if (!r.ok) return toast(r.error);
+      toast('즐겨찾기 추가됨');
+    }
+    closeFavModal();
+    renderFavorites();
+    refreshAllBars();
+  });
+
+  // 메인 즐겨찾기 그리드
+  function renderFavorites() {
+    const grid = document.getElementById('favGrid');
+    const cntEl = document.getElementById('favCount');
+    const favs = Store.list();
+    cntEl.textContent = `${favs.length}/${Store.MAX_FAVS}`;
+    grid.innerHTML = favs.map((f) => `
+      <div class="fav-item" data-id="${f.id}">
+        <span>${iconOf(f.label)}</span>
+        <span class="lbl">${escapeHtml(f.label)}</span>
+        <button type="button" class="ico-btn ico-edit" data-act="edit" title="편집">✎</button>
+        <button type="button" class="ico-btn ico-del"  data-act="del"  title="삭제">✕</button>
+      </div>`).join('');
+  }
+  document.getElementById('favGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const id = btn.closest('.fav-item')?.dataset.id;
+    const fav = Store.list().find((f) => f.id === id);
+    if (!fav) return;
+    if (btn.dataset.act === 'del') {
+      if (confirm(`"${fav.label}" 즐겨찾기를 삭제할까요?`)) {
+        Store.remove(id);
+        renderFavorites();
+        refreshAllBars();
+        toast('삭제됨');
+      }
+    } else if (btn.dataset.act === 'edit') {
+      openFavModal({ editing: fav });
+    }
+  });
+
+  // ── 카테고리 칩 (메뉴1 키워드) ─────────────────────────
   const m1kw = document.getElementById('m1-keyword');
   ['스타벅스', '카페', '주유소', '편의점', '약국', '주차장'].forEach((c) => {
     const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'chip';
     chip.textContent = c;
     chip.addEventListener('click', () => (m1kw.value = c));
     document.getElementById('m1-chips').appendChild(chip);
   });
 
-  // ── 공통: 거리/시간 포맷 ────────────────────────────────
-  const km = (m) => (m == null ? '-' : (m / 1000).toFixed(1) + 'km');
-
-  // 분 단위 절댓값 포맷 ("3분" / "1시간 5분")
-  function fmtMinAbs(seconds) {
-    const m = Math.round(Math.abs(seconds) / 60);
-    if (m < 60) return `${m}분`;
-    return `${Math.floor(m / 60)}시간 ${m % 60}분`;
-  }
-
-  // 베이스라인 대비 추가 시간 표시.
-  // 경유는 물리적으로 직접보다 빠를 수 없으므로(leg-split 예측 노이즈로 음수가 나와도)
-  // 1분 미만 차이는 "거의 동일", 1분 이상 양수만 "+N분 추가" 로 보여준다.
-  function extraBadgeHtml(extraSeconds) {
-    if (extraSeconds == null) return '';
-    const m = Math.round(extraSeconds / 60);
-    if (m < 1) return `<span style="color:#6b7280;font-weight:600">  ≈ 거의 동일</span>`;
-    return `<span style="color:#b45309;font-weight:600">  +${fmtMinAbs(extraSeconds)} 추가</span>`;
-  }
-
-  // ── 메뉴 1 실행 ─────────────────────────────────────────
-  // 결과/입력값은 카드 클릭 시 지도를 다시 그리기 위해 모듈 스코프에 보관
+  // ── 메뉴 1 ─────────────────────────────────────────────
   let m1State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m1ResultEl = document.getElementById('m1-result');
   const m1MapEl = document.getElementById('m1-map');
-  const m1MapHome = m1MapEl.parentElement; // 원래 자리(섹션 안, 결과 박스 밖)
+  const m1MapHome = m1MapEl.parentElement;
 
-  // 지도 div 를 선택된 카드 바로 아래에 끼워넣는다
   function m1MoveMapUnder(card) {
     if (!card || !m1MapEl) return;
     if (card.nextElementSibling !== m1MapEl) card.after(m1MapEl);
   }
-
   function m1DrawSelected(idx) {
     const r = m1State.results[idx];
     if (!r || r.error || r.totalTime == null) return;
@@ -175,18 +256,11 @@
     m1ResultEl.querySelectorAll('.res-card[data-idx]').forEach((c) => {
       c.classList.toggle('selected', Number(c.dataset.idx) === idx);
     });
-    MapView.draw('m1-map', {
-      mapKey: cfg.mapKey,
-      path: r.path,
-      markers: [
-        { lon: m1State.start.lon, lat: m1State.start.lat, label: '출발', role: 'start' },
-        { lon: r.poi.lon, lat: r.poi.lat, label: '경유', role: 'via' },
-        { lon: m1State.dest.lon, lat: m1State.dest.lat, label: '도착', role: 'end' },
-      ],
-    });
+    const markers = [{ lon: m1State.start.lon, lat: m1State.start.lat, label: '출발', role: 'start' }];
+    if (r.poi) markers.push({ lon: r.poi.lon, lat: r.poi.lat, label: '경유', role: 'via' });
+    markers.push({ lon: m1State.dest.lon, lat: m1State.dest.lat, label: '도착', role: 'end' });
+    MapView.draw('m1-map', { mapKey: cfg.mapKey, path: r.path, markers });
   }
-
-  // 카드 클릭은 위임 리스너로 한 번만 부착
   m1ResultEl.addEventListener('click', (e) => {
     const card = e.target.closest('.res-card[data-idx]');
     if (!card) return;
@@ -198,21 +272,35 @@
     const dest = PI.dest.getValue();
     const keyword = m1kw.value.trim();
     if (!start || !dest) return toast('출발지와 도착지를 선택하세요');
-    if (!keyword) return toast('찾을 장소를 입력하세요 (예: 스타벅스)');
 
     const btn = document.getElementById('m1-run');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
-    // 지난번 검색에서 지도를 결과 카드 사이로 옮겨놨다면, 결과 innerHTML 갱신 전에 원위치로 빼낸다
     if (m1MapEl.parentElement !== m1MapHome) m1MapHome.appendChild(m1MapEl);
     m1MapEl.hidden = true;
     m1ResultEl.innerHTML = '';
+    const time = document.getElementById('m1-time').value;
+    const predictionType = document.getElementById('m1-ptype').value;
+
     try {
+      // 키워드 비어있으면 → 직접 경로만 1회 조회
+      if (!keyword) {
+        btn.innerHTML = '<span class="spinner"></span>직접 경로 계산 중…';
+        const r = await Api.route({ start, dest, waypoints: [], time, predictionType });
+        m1State = { results: [{ poi: null, totalTime: r.totalTime, totalDistance: r.totalDistance, path: r.path }], start, dest, selectedIdx: -1 };
+        m1ResultEl.innerHTML = `
+          <div class="res-card clickable best" data-idx="0">
+            <div class="res-rank">직접 경로<span class="badge">경유지 없음</span><span class="tap-hint">탭하면 지도</span></div>
+            <div class="res-name">${escapeHtml(start.name)} → ${escapeHtml(dest.name)}</div>
+            <div class="res-time">${r.timeText || fmtMinAbs(r.totalTime)} · ${km(r.totalDistance)}</div>
+          </div>`;
+        m1DrawSelected(0);
+        return;
+      }
+
+      // 경유지 후보 비교
+      btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
       const { results, best, baseline } = await Api.minWaypoint({
-        start, dest, keyword,
-        time: document.getElementById('m1-time').value,
-        predictionType: document.getElementById('m1-ptype').value,
-        maxCandidates: 5,
+        start, dest, keyword, time, predictionType, maxCandidates: 5,
       });
       if (!results.length) {
         m1ResultEl.innerHTML = '<div class="hint">근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.</div>';
@@ -224,41 +312,35 @@
         return;
       }
       m1State = { results, start, dest, selectedIdx: -1 };
-
       const baselineCard = baseline?.totalTime != null ? `
         <div class="res-card" style="border-style:dashed">
           <div class="res-rank" style="color:#6b7280">기준 (경유 없이 바로 이동)</div>
           <div class="res-time">${baseline.timeText} · ${km(baseline.totalDistance)}</div>
         </div>` : '';
-      m1ResultEl.innerHTML = baselineCard + results
-        .map((r, i) => {
-          if (r.error) {
-            return `<div class="res-card" data-idx="${i}" data-err="1">
-              <div class="res-rank">${i + 1}순위</div>
-              <div class="res-name">${r.poi.name}</div>
-              <div class="res-meta">${r.poi.address || ''}</div>
-              <div class="res-meta" style="color:#b91c1c">계산 실패: ${r.error}</div></div>`;
-          }
-          const isBest = best && r.poi.name === best.poi.name && r.totalTime === best.totalTime;
-          const extra = extraBadgeHtml(r.extraSeconds);
-          return `
-            <div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
-              <div class="res-rank">${i + 1}순위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
-              <div class="res-name">${r.poi.name}</div>
-              <div class="res-meta">${r.poi.address || ''}</div>
-              <div class="res-time">${r.timeText} · ${km(r.totalDistance)}${extra}</div>
-            </div>`;
-        })
-        .join('');
-
-      // 1순위(첫 유효 결과)를 기본 선택
+      m1ResultEl.innerHTML = baselineCard + results.map((r, i) => {
+        if (r.error) {
+          return `<div class="res-card" data-idx="${i}" data-err="1">
+            <div class="res-rank">${i + 1}순위</div>
+            <div class="res-name">${escapeHtml(r.poi.name)}</div>
+            <div class="res-meta">${escapeHtml(r.poi.address || '')}</div>
+            <div class="res-meta" style="color:#b91c1c">계산 실패: ${escapeHtml(r.error)}</div></div>`;
+        }
+        const isBest = best && r.poi.name === best.poi.name && r.totalTime === best.totalTime;
+        const extra = extraBadgeHtml(r.extraSeconds);
+        return `<div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
+          <div class="res-rank">${i + 1}순위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
+          <div class="res-name">${escapeHtml(r.poi.name)}</div>
+          <div class="res-meta">${escapeHtml(r.poi.address || '')}</div>
+          <div class="res-time">${r.timeText} · ${km(r.totalDistance)}${extra}</div>
+        </div>`;
+      }).join('');
       const initIdx = results.findIndex((r) => !r.error && r.totalTime != null);
       if (initIdx >= 0) m1DrawSelected(initIdx);
     } catch (e) {
       toast(e.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = '최적 경유지 찾기';
+      btn.textContent = '조회 / 최적 경유지 찾기';
     }
   });
 
@@ -278,6 +360,8 @@
     row.appendChild(del);
     wpWrap.appendChild(row);
     const pi = PlaceInput.create(holder, { placeholder: `경유지 ${wpInputs.length + 1}` });
+    // 경유지에도 즐겨찾기 칩 부착 (현위치 X, 저장 X)
+    attachFavoritesBar(pi, holder, { withCurrent: false, withSave: false }).render();
     const ref = { pi, row };
     wpInputs.push(ref);
     del.addEventListener('click', () => {
@@ -287,9 +371,9 @@
     });
   }
   document.getElementById('m2-add').addEventListener('click', addWaypoint);
-  addWaypoint(); // 기본 1개
+  addWaypoint();
 
-  // ── 메뉴 2 실행 ─────────────────────────────────────────
+  // ── 메뉴 2 실행 ────────────────────────────────────────
   let m2State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m2ResultEl = document.getElementById('m2-result');
   const m2MapEl = document.getElementById('m2-map');
@@ -299,7 +383,6 @@
     if (!card || !m2MapEl) return;
     if (card.nextElementSibling !== m2MapEl) card.after(m2MapEl);
   }
-
   function m2DrawSelected(idx) {
     const r = m2State.results[idx];
     if (!r || r.error || r.totalTime == null) return;
@@ -319,7 +402,6 @@
       ],
     });
   }
-
   m2ResultEl.addEventListener('click', (e) => {
     const card = e.target.closest('.res-card[data-idx]');
     if (!card) return;
@@ -338,7 +420,6 @@
     const btn = document.getElementById('m2-run');
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span>${factorial(waypoints.length)}가지 순서 비교 중…`;
-    // 지도 원위치 복귀 후 결과 비우기
     if (m2MapEl.parentElement !== m2MapHome) m2MapHome.appendChild(m2MapEl);
     m2MapEl.hidden = true;
     m2ResultEl.innerHTML = '';
@@ -353,31 +434,25 @@
         return;
       }
       m2State = { results, start, dest, selectedIdx: -1 };
-
-      const header = `<div class="hint">${combinations}가지 순서를 모두 계산 — 시간 짧은 순으로 정렬. 카드를 탭하면 해당 순서의 지도가 펼쳐집니다.</div>`;
-      m2ResultEl.innerHTML = header + results
-        .map((r, i) => {
-          // 시퀀스 표시: "출발 → 경유1 (카페A) → 경유2 (주유소B) → 도착"
-          const seqParts = ['<b>출발</b>'];
-          r.order.forEach((w, j) => seqParts.push(`<b>경유${j + 1}</b> <span style="color:#6b7280">(${escapeHtml(w.name)})</span>`));
-          seqParts.push('<b>도착</b>');
-          const seq = seqParts.join(' → ');
-
-          if (r.error) {
-            return `<div class="res-card" data-idx="${i}" data-err="1">
-              <div class="res-rank">${i + 1}위</div>
-              <div class="res-name" style="font-size:13px;font-weight:500">${seq}</div>
-              <div class="res-meta" style="color:#b91c1c">계산 실패: ${escapeHtml(r.error)}</div></div>`;
-          }
-          const isBest = best && r.totalTime === best.totalTime;
-          return `<div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
-            <div class="res-rank">${i + 1}위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
-            <div class="res-name" style="font-size:13px;font-weight:500;line-height:1.5">${seq}</div>
-            <div class="res-time">${r.timeText} · ${km(r.totalDistance)}</div>
-          </div>`;
-        })
-        .join('');
-
+      const header = `<div class="hint">${combinations}가지 순서를 모두 계산 — 시간 짧은 순으로 정렬. 카드 탭하면 그 순서의 지도가 펼쳐집니다.</div>`;
+      m2ResultEl.innerHTML = header + results.map((r, i) => {
+        const seqParts = ['<b>출발</b>'];
+        r.order.forEach((w, j) => seqParts.push(`<b>경유${j + 1}</b> <span style="color:#6b7280">(${escapeHtml(w.name)})</span>`));
+        seqParts.push('<b>도착</b>');
+        const seq = seqParts.join(' → ');
+        if (r.error) {
+          return `<div class="res-card" data-idx="${i}" data-err="1">
+            <div class="res-rank">${i + 1}위</div>
+            <div class="res-name" style="font-size:13px;font-weight:500">${seq}</div>
+            <div class="res-meta" style="color:#b91c1c">계산 실패: ${escapeHtml(r.error)}</div></div>`;
+        }
+        const isBest = best && r.totalTime === best.totalTime;
+        return `<div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
+          <div class="res-rank">${i + 1}위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
+          <div class="res-name" style="font-size:13px;font-weight:500;line-height:1.5">${seq}</div>
+          <div class="res-time">${r.timeText} · ${km(r.totalDistance)}</div>
+        </div>`;
+      }).join('');
       const initIdx = results.findIndex((r) => !r.error && r.totalTime != null);
       if (initIdx >= 0) m2DrawSelected(initIdx);
     } catch (e) {
@@ -388,10 +463,6 @@
     }
   });
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  }
-
   // ── 부팅 ────────────────────────────────────────────────
   (async function boot() {
     try {
@@ -400,6 +471,14 @@
     } catch {
       toast('서버 설정을 불러오지 못했어요');
     }
+    renderFavorites();
+    refreshAllBars();
     showView('home');
+    // 환영카드: 날짜/날씨/배경 (비동기, 실패해도 무관)
+    WeatherView.load(
+      document.getElementById('weatherBg'),
+      document.getElementById('welcomeInfo'),
+      document.getElementById('welcomeGreeting'),
+    ).catch(() => {});
   })();
 })();
