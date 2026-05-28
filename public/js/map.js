@@ -3,21 +3,33 @@
 window.MapView = (function () {
   let sdkPromise = null;
 
-  // SDK 는 보통 HTML 의 <head> 에서 동기 로드된다(서버가 주입).
-  // 이미 Tmapv2.Map 이 있으면 즉시 통과. 없으면(키 미주입 등) 동적 로드는 신뢰할 수 없으니 명시적으로 실패시킨다.
+  // SDK 로딩 전략
+  // 1) HTML 의 <head> 에 박힌 TMAP 로더가 document.write 로 진짜 SDK 를 주입한다.
+  //    데스크탑 Chrome/Safari 에서는 잘 작동.
+  // 2) iOS Safari 등은 cross-origin script 의 document.write 를 막아 SDK 본체가 안 들어옴.
+  //    그래서 1.2 초 안에 Tmapv2.Map 이 안 보이면, SDK 본체를 우리가 직접 <script> 로 주입한다.
+  //    (로더 script 태그는 DOM 에 그대로 남아있어 SDK 가 그 URL 에서 appKey 를 추출할 수 있다.)
   function loadSdk(_mapKey) {
     if (sdkPromise) return sdkPromise;
     sdkPromise = new Promise((resolve, reject) => {
       if (window.Tmapv2 && window.Tmapv2.Map) return resolve();
-      // 짧게 한 번 더 기다려본다(SDK 가 늦게 들어올 수 있어)
       const t0 = Date.now();
+      let fallbackInjected = false;
       const iv = setInterval(() => {
         if (window.Tmapv2 && window.Tmapv2.Map) {
           clearInterval(iv);
-          resolve();
-        } else if (Date.now() - t0 > 4000) {
+          return resolve();
+        }
+        if (!fallbackInjected && Date.now() - t0 > 1200) {
+          fallbackInjected = true;
+          const s = document.createElement('script');
+          s.src = 'https://topopentile1.tmap.co.kr/scriptSDKV2/tmapjs2.min.js?version=20231206';
+          s.onerror = () => console.error('TMAP SDK 직접 로드 실패 (네트워크/도메인 차단 의심)');
+          document.head.appendChild(s);
+        }
+        if (Date.now() - t0 > 10000) {
           clearInterval(iv);
-          reject(new Error('TMAP 지도 SDK 가 로드되지 않았습니다. (서버에서 appKey 가 주입됐는지, 지도 API 가 구독돼 있는지 확인)'));
+          reject(new Error('TMAP 지도 SDK 가 로드되지 않았습니다. (네트워크 또는 키 설정 확인)'));
         }
       }, 100);
     });
