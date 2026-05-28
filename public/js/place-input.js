@@ -87,6 +87,7 @@ window.PlaceInput = (function () {
         selected = p;
         if (p) renderSelected();
         else renderInput();
+        opts.onChange?.(selected);
       },
       clear: () => {
         selected = null;

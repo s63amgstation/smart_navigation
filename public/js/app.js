@@ -36,11 +36,91 @@
   document.getElementById('m1-time').value = nowLocal();
   document.getElementById('m2-time').value = nowLocal();
 
+  // ── 현재 위치 가져오기 ─────────────────────────────────
+  function useCurrentLocation(placeInput) {
+    if (!navigator.geolocation) return toast('이 브라우저는 위치 정보를 지원하지 않습니다');
+    toast('현재 위치 확인 중…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lon } = pos.coords;
+        placeInput.setValue({ name: '📍 내 현재 위치', lon, lat, address: '' });
+      },
+      (err) => {
+        const m = {
+          1: '위치 권한이 거부됨. iPhone: 설정 > Safari > 위치 → 허용으로 바꿔주세요.',
+          2: '현재 위치를 확인할 수 없습니다.',
+          3: '위치 확인 시간 초과',
+        };
+        toast(m[err.code] || '위치 확인 실패: ' + err.message);
+      },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 },
+    );
+  }
+
+  // ── 출발지 칩(현위치/집/집으로 저장) ─────────────────────
+  function attachStartHelpers(placeInput, holderEl) {
+    const row = document.createElement('div');
+    row.className = 'quick-fill';
+    holderEl.parentElement.insertBefore(row, holderEl.nextSibling);
+
+    function render() {
+      row.innerHTML = '';
+      // 📍 현위치
+      addChip(row, '📍 현위치', () => useCurrentLocation(placeInput));
+      // 🏠 집 (저장돼 있을 때만)
+      const home = Store.getHome();
+      if (home) {
+        addChip(row, '🏠 집', () => placeInput.setValue(home), home.name);
+        addChip(row, '✕', () => {
+          if (confirm('저장된 집주소를 삭제할까요?')) {
+            Store.clearHome();
+            toast('집주소 삭제됨');
+            allRenders.forEach((r) => r()); // 다른 입력의 칩도 동기화
+          }
+        }, '집주소 해제').classList.add('chip-mini');
+      }
+      // 💾 현재 출발지를 집으로 저장 (값이 있고, 저장된 집과 다를 때만)
+      const cur = placeInput.getValue();
+      if (cur && cur.lon != null && cur.lat != null) {
+        const same = home && Math.abs(cur.lon - home.lon) < 1e-4 && Math.abs(cur.lat - home.lat) < 1e-4;
+        if (!same) {
+          addChip(row, '💾 이 위치를 집으로', () => {
+            Store.setHome(cur);
+            toast('집주소로 저장됨');
+            allRenders.forEach((r) => r());
+          }).classList.add('chip-save');
+        }
+      }
+    }
+    allRenders.push(render);
+    return { render };
+  }
+
+  function addChip(parent, text, onClick, title) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = text;
+    if (title) b.title = title;
+    b.addEventListener('click', onClick);
+    parent.appendChild(b);
+    return b;
+  }
+
+  const allRenders = []; // 두 출발지 입력의 칩들을 동시에 갱신할 때 사용
+
   // ── 장소 입력 인스턴스 ──────────────────────────────────
   const PI = {};
-  PI.start = PlaceInput.create(document.querySelector('[data-role="start"]'), { placeholder: '출발지 검색' });
+  function makeStart(role, placeholder) {
+    const holder = document.querySelector(`[data-role="${role}"]`);
+    let helpers;
+    const pi = PlaceInput.create(holder, { placeholder, onChange: () => helpers?.render() });
+    helpers = attachStartHelpers(pi, holder);
+    return pi;
+  }
+  PI.start = makeStart('start', '출발지 검색');
   PI.dest = PlaceInput.create(document.querySelector('[data-role="dest"]'), { placeholder: '도착지 검색' });
-  PI.m2start = PlaceInput.create(document.querySelector('[data-role="m2start"]'), { placeholder: '출발지 검색' });
+  PI.m2start = makeStart('m2start', '출발지 검색');
   PI.m2dest = PlaceInput.create(document.querySelector('[data-role="m2dest"]'), { placeholder: '도착지 검색' });
 
   // ── 카테고리 칩 (메뉴1) ─────────────────────────────────
@@ -55,6 +135,23 @@
 
   // ── 공통: 거리/시간 포맷 ────────────────────────────────
   const km = (m) => (m == null ? '-' : (m / 1000).toFixed(1) + 'km');
+
+  // 분 단위 절댓값 포맷 ("3분" / "1시간 5분")
+  function fmtMinAbs(seconds) {
+    const m = Math.round(Math.abs(seconds) / 60);
+    if (m < 60) return `${m}분`;
+    return `${Math.floor(m / 60)}시간 ${m % 60}분`;
+  }
+
+  // 베이스라인 대비 추가 시간 표시.
+  // 경유는 물리적으로 직접보다 빠를 수 없으므로(leg-split 예측 노이즈로 음수가 나와도)
+  // 1분 미만 차이는 "거의 동일", 1분 이상 양수만 "+N분 추가" 로 보여준다.
+  function extraBadgeHtml(extraSeconds) {
+    if (extraSeconds == null) return '';
+    const m = Math.round(extraSeconds / 60);
+    if (m < 1) return `<span style="color:#6b7280;font-weight:600">  ≈ 거의 동일</span>`;
+    return `<span style="color:#b45309;font-weight:600">  +${fmtMinAbs(extraSeconds)} 추가</span>`;
+  }
 
   // ── 메뉴 1 실행 ─────────────────────────────────────────
   // 결과/입력값은 카드 클릭 시 지도를 다시 그리기 위해 모듈 스코프에 보관
@@ -143,7 +240,7 @@
               <div class="res-meta" style="color:#b91c1c">계산 실패: ${r.error}</div></div>`;
           }
           const isBest = best && r.poi.name === best.poi.name && r.totalTime === best.totalTime;
-          const extra = r.extraText ? `<span style="color:#b45309;font-weight:600">  ${r.extraText} 추가</span>` : '';
+          const extra = extraBadgeHtml(r.extraSeconds);
           return `
             <div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
               <div class="res-rank">${i + 1}순위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>

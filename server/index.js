@@ -126,10 +126,11 @@ app.post(
       poolSize: pool.length,
       searchRadiusKm: radius,
       baseline,
+      // extraSeconds 는 음수(이 경유가 직접 경로보다 빠름)일 수도 있어 raw 로만 내려준다.
+      // 표시 문구/색은 프론트에서 부호별로 결정한다.
       results: results.map((r) => ({
         ...r,
         timeText: fmtMinutes(r.totalTime),
-        extraText: r.extraSeconds != null ? `+${fmtMinutes(r.extraSeconds)}` : null,
       })),
       best: best ? { ...best, timeText: fmtMinutes(best.totalTime) } : null,
     });

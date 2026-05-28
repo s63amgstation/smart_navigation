@@ -101,6 +101,15 @@ html, body {
 select.text-input { appearance: none; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.quick-fill { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.quick-fill .chip { font-size: 13px; padding: 7px 12px; }
+.quick-fill .chip-mini { padding: 7px 10px; color: #b91c1c; }
+.quick-fill .chip-save {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #b45309;
+  font-weight: 600;
+}
 .chip {
   border: 1px solid var(--line);
   background: var(--card);
