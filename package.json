@@ -1,0 +1,14 @@
+{
+  "name": "smart-navigation",
+  "version": "0.1.0",
+  "description": "TMAP 기반 복합경로 길찾기 도우미 (최소 경유지 / 멀티 경유지 최적화)",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}

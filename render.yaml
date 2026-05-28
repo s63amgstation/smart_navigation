@@ -1,0 +1,15 @@
+# Render Blueprint — 이 파일을 두면 GitHub 연결 시 자동으로 서비스가 정의된다.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: smart-navigation
+    runtime: docker
+    plan: free
+    region: singapore   # 한국에서 가까운 free 리전
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: TMAP_APP_KEY
+        sync: false       # 값은 Render 대시보드에서 직접 입력 (소스에 안 박힘)
+      - key: NODE_ENV
+        value: production

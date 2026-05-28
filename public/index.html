@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1f6feb" />
+    <title>스마트 길찾기</title>
+    <link rel="stylesheet" href="./css/styles.css" />
+    <!-- TMAP 지도 SDK 는 HTML 파싱 단계에서 실행되어야 한다(내부에서 document.write 로 진짜 SDK 를 주입). -->
+    <!-- __TMAP_KEY__ 자리는 서버가 .env 의 TMAP_APP_KEY 로 치환한다. -->
+    <script src="https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=__TMAP_KEY__"></script>
+  </head>
+  <body>
+    <!-- 상단 바 -->
+    <header class="appbar">
+      <button id="backBtn" class="icon-btn" hidden aria-label="뒤로">‹</button>
+      <h1 id="title">스마트 길찾기</h1>
+      <span class="icon-btn" aria-hidden="true"></span>
+    </header>
+
+    <main id="app">
+      <!-- 홈 -->
+      <section data-view="home" class="view active">
+        <div class="home-hero">
+          <p class="home-sub">가는 길에 들를 곳, 똑똑하게</p>
+        </div>
+        <button class="menu-card" data-go="menu1">
+          <div class="menu-emoji">📍</div>
+          <div class="menu-text">
+            <strong>최소 경유지 찾기</strong>
+            <span>A→B 가는 길에 가장 덜 돌아가는 곳 찾기</span>
+          </div>
+          <span class="chev">›</span>
+        </button>
+        <button class="menu-card" data-go="menu2">
+          <div class="menu-emoji">🔀</div>
+          <div class="menu-text">
+            <strong>멀티 경유지 최적화</strong>
+            <span>여러 곳을 들를 때 가장 빠른 순서 찾기</span>
+          </div>
+          <span class="chev">›</span>
+        </button>
+      </section>
+
+      <!-- 메뉴 1 -->
+      <section data-view="menu1" class="view">
+        <div class="field">
+          <label>출발지</label>
+          <div class="place-input" data-role="start"></div>
+        </div>
+        <div class="field">
+          <label>도착지</label>
+          <div class="place-input" data-role="dest"></div>
+        </div>
+        <div class="field">
+          <label>찾을 장소</label>
+          <input id="m1-keyword" class="text-input" placeholder="예: 스타벅스, 주유소, 약국" />
+          <div class="chips" id="m1-chips"></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>기준</label>
+            <select id="m1-ptype" class="text-input">
+              <option value="departure">출발 시각</option>
+              <option value="arrival">도착 시각</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>시간</label>
+            <input id="m1-time" class="text-input" type="datetime-local" />
+          </div>
+        </div>
+        <button id="m1-run" class="primary-btn">최적 경유지 찾기</button>
+        <div id="m1-result" class="result"></div>
+        <div id="m1-map" class="map" hidden></div>
+      </section>
+
+      <!-- 메뉴 2 -->
+      <section data-view="menu2" class="view">
+        <div class="field">
+          <label>출발지</label>
+          <div class="place-input" data-role="m2start"></div>
+        </div>
+        <div class="field">
+          <label>경유지 <small>(최대 5)</small></label>
+          <div id="m2-waypoints"></div>
+          <button id="m2-add" class="ghost-btn">+ 경유지 추가</button>
+        </div>
+        <div class="field">
+          <label>도착지</label>
+          <div class="place-input" data-role="m2dest"></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>기준</label>
+            <select id="m2-ptype" class="text-input">
+              <option value="departure">출발 시각</option>
+              <option value="arrival">도착 시각</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>시간</label>
+            <input id="m2-time" class="text-input" type="datetime-local" />
+          </div>
+        </div>
+        <button id="m2-run" class="primary-btn">최적 순서 계산</button>
+        <div id="m2-result" class="result"></div>
+        <div id="m2-map" class="map" hidden></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="./js/api.js"></script>
+    <script src="./js/map.js"></script>
+    <script src="./js/place-input.js"></script>
+    <script src="./js/app.js"></script>
+  </body>
+</html>
