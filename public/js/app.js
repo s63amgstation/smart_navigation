@@ -352,20 +352,6 @@
     document.getElementById('m1-chips').appendChild(chip);
   });
 
-  // ── 검색 anchor (출발지 중심 / 도착지 중심) ─────────────
-  let m1Anchor = 'start';
-  const m1AnchorEl = document.getElementById('m1-anchor');
-  m1AnchorEl.addEventListener('click', (e) => {
-    const opt = e.target.closest('.ax-opt');
-    if (!opt) return;
-    m1Anchor = opt.dataset.anchor === 'dest' ? 'dest' : 'start';
-    m1AnchorEl.querySelectorAll('.ax-opt').forEach((b) => {
-      const on = b.dataset.anchor === m1Anchor;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-    });
-  });
-
   // ── 메뉴 1 ─────────────────────────────────────────────
   let m1State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m1ResultEl = document.getElementById('m1-result');
@@ -442,16 +428,13 @@
 
       // 경유지 후보 비교
       btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
-      const { results, best, baseline, note } = await Api.minWaypoint({
+      const { results, best, baseline } = await Api.minWaypoint({
         start, dest, keyword, time, predictionType, maxCandidates: 5,
-        anchor: m1Anchor,
       });
       if (!results.length) {
-        m1ResultEl.innerHTML = `<div class="hint">${escapeHtml(note || '근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.')}</div>`;
+        m1ResultEl.innerHTML = '<div class="hint">근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.</div>';
         return;
       }
-      // 60% 반대편 폴백 안내문 (서버가 tier=3 일 때만 채워줌)
-      const noteHtml = note ? `<div class="result-note">⚠️ ${escapeHtml(note)}</div>` : '';
       if (!best) {
         const firstErr = results.find((r) => r.error)?.error || '경로 계산 실패';
         m1ResultEl.innerHTML = `<div class="hint">경로 계산이 모두 실패했어요. (${firstErr})</div>`;
@@ -463,7 +446,7 @@
           <div class="res-rank" style="color:#6b7280">기준 (경유 없이 바로 이동)</div>
           <div class="res-time">${baseline.timeText} · ${km(baseline.totalDistance)}</div>
         </div>` : '';
-      m1ResultEl.innerHTML = noteHtml + baselineCard + results.map((r, i) => {
+      m1ResultEl.innerHTML = baselineCard + results.map((r, i) => {
         if (r.error) {
           return `<div class="res-card" data-idx="${i}" data-err="1">
             <div class="res-rank">${i + 1}순위</div>

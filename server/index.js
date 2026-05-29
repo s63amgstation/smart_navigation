@@ -62,89 +62,44 @@ function haversine(a, b) {
 }
 
 // ── 메뉴 1: 최소 경유지 찾기 ───────────────────────────────────────
-// body: { start, dest, keyword, time, predictionType, maxCandidates, anchor }
-//   anchor: 'start' (출발지 중심) | 'dest' (도착지 중심).  기본 'start'.
+// body: { start, dest, keyword, time, predictionType, maxCandidates }
 //
-// 전략: 사용자가 고른 anchor 한쪽에서만 검색하되 반경을 단계적으로 늘림.
-//   Tier 1 — 선택한 anchor, 반경 = D × 20%
-//   Tier 2 — 같은 anchor, 반경 = D × 40%
-//   Tier 3 — 반대편 anchor, 반경 = D × 60% (응답에 안내문 첨부)
-// 각 tier 에서 결과가 나오는 즉시 그 단계로 확정. 후보는 "직선 우회거리"로
-// 미리 정렬해 상위 maxCandidates 개만 진짜 예측 API 를 돌린다.
+// 전략: 출발지·도착지 양쪽에서 넓게 POI 를 수집하고(=도착지 옆/출발지 옆도 누락 없이 잡힘),
+// "직선 우회거리"(|S→P|+|P→D|-|S→D|)로 싸게 정렬한 뒤
+// 상위 N개에만 비싼 예측 API 를 돌린다.
 app.post(
   '/api/min-waypoint',
   wrap(async (req, res) => {
-    const {
-      start, dest, keyword, time,
-      predictionType = 'departure',
-      maxCandidates = 5,
-      anchor = 'start',
-    } = req.body;
+    const { start, dest, keyword, time, predictionType = 'departure', maxCandidates = 5 } = req.body;
     if (!start || !dest || !keyword) {
       return res.status(400).json({ error: 'start, dest, keyword 가 필요합니다.' });
     }
 
-    const anchorPole = anchor === 'dest' ? 'dest' : 'start';
-    const oppositePole = anchorPole === 'start' ? 'dest' : 'start';
+    // 1) 양쪽에서 넓게 검색 (TMAP radius 는 km, 1~33, 정수)
     const directM = haversine(start, dest);
-    const directKm = directM / 1000;
+    const radius = Math.min(33, Math.max(5, Math.round(directM / 2000 + 3))); // 경로 절반 + 여유
+    const [nearStart, nearDest] = await Promise.all([
+      searchPois({ keyword, centerLon: start.lon, centerLat: start.lat, radius, count: 20 }),
+      searchPois({ keyword, centerLon: dest.lon, centerLat: dest.lat, radius, count: 20 }),
+    ]);
 
-    // 반경(km)을 TMAP 한도 [1, 33] 으로 클램프. 정수 km 만 허용되므로 반드시 반올림.
-    const clampKm = (km) => Math.min(33, Math.max(1, Math.round(km)));
-
-    // 단계 정의
-    const tiers = [
-      { tier: 1, pole: anchorPole,   pct: 0.2 },
-      { tier: 2, pole: anchorPole,   pct: 0.4 },
-      { tier: 3, pole: oppositePole, pct: 0.6 },
-    ];
-
-    // 단계적으로 첫 결과가 나올 때까지 시도
-    let chosen = null;
-    let pois = [];
-    let radius = 0;
-    for (const t of tiers) {
-      radius = clampKm(directKm * t.pct);
-      const center = t.pole === 'start' ? start : dest;
-      const found = await searchPois({
-        keyword,
-        centerLon: center.lon,
-        centerLat: center.lat,
-        radius,
-        count: 20,
-      });
-      if (found.length) {
-        chosen = t;
-        pois = found;
-        break;
-      }
-    }
-
-    if (!chosen) {
-      return res.json({
-        results: [],
-        best: null,
-        poolSize: 0,
-        anchor: anchorPole,
-        tier: 0,
-        note: '어느 반경으로 늘려도 후보를 찾지 못했어요. 키워드를 바꿔보세요.',
-      });
-    }
-
-    // 후보 풀: 직선 우회거리(|S→P|+|P→D|-|S→D|) 작은 순으로 사전 정렬해 상위만 진짜 예측
+    // 2) 중복 제거 + 직선 우회거리 계산
     const seen = new Set();
     const pool = [];
-    for (const p of pois) {
+    for (const p of [...nearStart, ...nearDest]) {
       const k = `${p.name}|${p.lon.toFixed(4)},${p.lat.toFixed(4)}`;
       if (seen.has(k)) continue;
       seen.add(k);
       const detour = haversine(start, p) + haversine(p, dest) - directM;
       pool.push({ ...p, detourM: Math.round(detour) });
     }
+    if (!pool.length) return res.json({ results: [], best: null, poolSize: 0 });
+
+    // 3) 직선 우회거리 작은 순 상위 N개만 진짜 예측
     pool.sort((a, b) => a.detourM - b.detourM);
     const candidates = pool.slice(0, maxCandidates);
 
-    // 베이스라인(경유 없음) — "이만큼 더 걸린다" 비교용
+    // 베이스라인(경유 없음) 1회 계산 — "이만큼 더 걸린다"를 보여주기 위함
     let baseline = null;
     try {
       const b = await predictRoute({ start, dest, waypoints: [], time, predictionType });
@@ -171,26 +126,16 @@ app.post(
     }
     results.sort((a, b) => (a.totalTime ?? Infinity) - (b.totalTime ?? Infinity));
     const best = results.find((r) => r.totalTime != null) || null;
-
-    // Tier 3 (반대편 폴백) 일 때만 안내문을 만들어 함께 내려준다.
-    // 예: anchor=start, 결과 없음 → dest 60% 에서 찾음
-    //     "출발지 부근에는 없어요. 가장 가까운 경유 경로는 '스타벅스 대전역점' 입니다."
-    let note = null;
-    if (chosen.tier === 3 && best && best.poi) {
-      const anchorLabel = anchorPole === 'start' ? '출발지' : '도착지';
-      const oppLabel = oppositePole === 'start' ? '출발지' : '도착지';
-      note = `${anchorLabel} 부근에는 없어요. ${oppLabel} 부근에서 가장 가까운 경유 경로는 '${best.poi.name}' 입니다.`;
-    }
-
     res.json({
       poolSize: pool.length,
       searchRadiusKm: radius,
-      anchor: anchorPole,
-      tier: chosen.tier,
-      note,
       baseline,
-      // extraSeconds 부호 처리는 프론트가 함 (음수일 수도 있음).
-      results: results.map((r) => ({ ...r, timeText: fmtMinutes(r.totalTime) })),
+      // extraSeconds 는 음수(이 경유가 직접 경로보다 빠름)일 수도 있어 raw 로만 내려준다.
+      // 표시 문구/색은 프론트에서 부호별로 결정한다.
+      results: results.map((r) => ({
+        ...r,
+        timeText: fmtMinutes(r.totalTime),
+      })),
       best: best ? { ...best, timeText: fmtMinutes(best.totalTime) } : null,
     });
   }),
