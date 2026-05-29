@@ -55,7 +55,12 @@ export async function searchPois({ keyword, centerLon, centerLat, radius = 0, co
   if (centerLon && centerLat) {
     params.set('centerLon', String(centerLon));
     params.set('centerLat', String(centerLat));
-    if (radius) params.set('radius', String(radius)); // km
+    // TMAP radius 는 1~33 사이 "정수 km" — 소수로 보내면 400.
+    // 호출자가 이미 정수로 주면 그대로, 소수가 흘러들어와도 여기서 한 번 더 굳혀준다.
+    if (radius) {
+      const r = Math.min(33, Math.max(1, Math.round(Number(radius))));
+      params.set('radius', String(r));
+    }
     params.set('searchtypCd', 'R'); // R: 중심좌표 주변 검색
   }
 

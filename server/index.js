@@ -89,8 +89,8 @@ app.post(
     const directM = haversine(start, dest);
     const directKm = directM / 1000;
 
-    // 반경(km)을 TMAP 한도 [1, 33] 으로 클램프
-    const clampKm = (km) => Math.min(33, Math.max(1, km));
+    // 반경(km)을 TMAP 한도 [1, 33] 으로 클램프. 정수 km 만 허용되므로 반드시 반올림.
+    const clampKm = (km) => Math.min(33, Math.max(1, Math.round(km)));
 
     // 단계 정의
     const tiers = [
