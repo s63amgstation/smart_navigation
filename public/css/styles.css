@@ -201,7 +201,12 @@ select.text-input { appearance: none; }
 }
 
 /* place-input (자동완성) */
-.place-box { position: relative; }
+.place-box { position: relative; transition: box-shadow 0.15s; }
+/* 빠른 입력 바가 어느 박스에 채울지 시각적으로 표시 */
+.place-input.is-target .place-box {
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.28);
+  border-radius: 12px;
+}
 .place-box .selected {
   display: flex;
   align-items: center;
@@ -666,29 +671,40 @@ body.home-active .icon-btn { color: var(--text); }
   font-size: 13px;
   padding: 8px 0;
 }
+/* 라벨 칩 — 탭하면 아래 폼이 열린다 (인라인 버튼 없음) */
 .fav-item {
+  /* <button> 기본 appearance/폰트 normalize (iOS Safari 가 회색 그라디언트 입힘) */
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  line-height: 1;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   background: #f1f5fb;
   border: 1px solid #d8e3ef;
   border-radius: 999px;
-  padding: 6px 6px 6px 12px;
+  padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
-}
-.fav-item .lbl { color: var(--text); }
-.fav-item .ico-btn {
-  width: 26px; height: 26px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-size: 14px;
+  color: var(--text);
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.05s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  max-width: 100%;
 }
-.fav-item .ico-btn:active { background: rgba(0,0,0,0.06); }
-.fav-item .ico-del:active { color: #b91c1c; }
+.fav-item .lbl {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+.fav-item:active { transform: scale(0.97); }
+.fav-item.selected {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
 
 /* 즐겨찾기 인라인 폼 */
 .fav-form {
@@ -699,9 +715,55 @@ body.home-active .icon-btn { color: var(--text); }
   background: #f9fbff;
 }
 .fav-form h4 { margin: 0 0 10px; font-size: 14px; }
-.fav-form .form-actions { display: flex; gap: 10px; margin-top: 8px; }
-.fav-form .form-actions .ghost-btn { flex: 0 0 90px; color: #b91c1c; border-color: #f3c9c9; }
-.fav-form .form-actions .primary-btn { flex: 1; margin-top: 0; }
+.fav-form .form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+.fav-form .form-actions .ghost-btn {
+  flex: 0 0 auto;
+  height: 40px;
+  padding: 0 14px;
+  color: var(--muted);
+  border-color: var(--line);
+  background: #fff;
+}
+.fav-form .form-actions .fav-delete-btn {
+  color: #b91c1c;
+  border-color: #f3c9c9;
+  background: #fff5f5;
+}
+.fav-form .form-actions .fav-delete-btn:active { background: #ffe1e1; }
+.fav-form .form-actions .primary-btn {
+  flex: 1;
+  margin-top: 0;
+  height: 40px;
+}
+
+/* 메뉴1·2 상단의 "빠른 입력" 컨테이너 — 라벨 + 칩 한 줄 */
+.quick-fav {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.quick-fav-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.quick-fav-bar { margin-top: 0; }
+.quick-fav-empty {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 6px 2px;
+  display: inline-block;
+}
 
 /* 검색 입력 아래에 붙는 즐겨찾기 칩 행 — 한 줄, 가로 스크롤 */
 .fav-bar {

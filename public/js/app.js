@@ -231,8 +231,9 @@
     );
   }
 
-  // ── 즐겨찾기 칩 행 (모든 검색 입력 아래에 붙음) ─────────
-  // 심플 추구 — 이모지 제거. 라벨(집/회사/학교 등)만으로도 충분히 식별됨.
+  // ── 빠른 입력 바 (메뉴1·2 상단 단일 바) ──────────────────
+  // 각 입력박스 아래에 칩을 반복 노출하면 화면이 도배되므로,
+  // 메뉴별로 상단에 하나만 두고 "활성화된" 입력박스에 채워넣는다.
   function addChip(parent, text, onClick, title) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -243,52 +244,110 @@
     parent.appendChild(b);
     return b;
   }
-  const allRenders = []; // 즐겨찾기 변화 시 모든 칩행을 동시에 갱신
-  function attachFavoritesBar(placeInput, holderEl, opts = {}) {
-    const row = document.createElement('div');
-    row.className = 'fav-bar';
-    // 메뉴2 경유지 입력은 holderEl 의 부모가 .wp-row (display:flex) 라서, 거기 직접 끼우면
-    // fav-bar 가 flex 자식으로 들어가 텍스트박스를 옆에서 짜부러뜨림.
-    // → wp-row 바깥(=다음 형제)으로 올려서 입력 한 줄 아래에 깔리게 함.
-    const wpRow = holderEl.closest('.wp-row');
-    const anchor = wpRow || holderEl;
-    anchor.parentElement.insertBefore(row, anchor.nextSibling);
+
+  // 모든 바가 공유하는 갱신 트리거 — Store 변경/PI 변경 시 호출
+  const barRenders = [];
+  function refreshAllBars() { barRenders.forEach((r) => r()); }
+
+  function mountTopFavBar(barEl, getInputs, opts = {}) {
+    let activeIdx = 0;
+
+    function syncTargetMark() {
+      const list = getInputs();
+      list.forEach((pi, i) => {
+        pi.__holder?.classList.toggle('is-target', i === activeIdx);
+      });
+    }
+
+    function setActive(i) {
+      const list = getInputs();
+      if (!list.length) return;
+      activeIdx = Math.max(0, Math.min(i, list.length - 1));
+      syncTargetMark();
+      render();
+    }
+
+    // 입력박스(holderEl) 어디든 탭하면 그 박스가 활성 타겟이 된다.
+    // 동적으로 추가되는 경유지 입력에도 재호출.
+    function wireInput(pi) {
+      const holder = pi.__holder;
+      if (!holder || holder.__wiredToBar === barEl) return;
+      holder.__wiredToBar = barEl;
+      const onTouch = () => {
+        const i = getInputs().indexOf(pi);
+        if (i >= 0) setActive(i);
+      };
+      holder.addEventListener('pointerdown', onTouch);
+      holder.addEventListener('focusin', onTouch);
+    }
+
     function render() {
-      row.innerHTML = '';
+      barEl.innerHTML = '';
+      const list = getInputs();
+      const pi = list[activeIdx];
       if (opts.withCurrent) {
-        addChip(row, '현위치', () => useCurrentLocation(placeInput)).classList.add('chip-cur');
+        addChip(barEl, '현위치', () => {
+          if (pi) useCurrentLocation(pi);
+        }).classList.add('chip-cur');
       }
       Store.list().forEach((f) => {
-        addChip(row, f.label, () => placeInput.setValue(f), f.name);
+        addChip(barEl, f.label, () => { if (pi) pi.setValue(f); }, f.name);
       });
-      if (opts.withSave) {
-        const cur = placeInput.getValue();
-        if (cur && cur.lon != null && cur.lat != null && !Store.findByCoord(cur.lon, cur.lat)) {
-          addChip(row, '즐겨찾기 추가', () => {
-            showView('favs');
-            showFavForm({ preset: cur });
-          }).classList.add('chip-save');
-        }
+      // 활성 입력에 미저장 값이 있으면 즐겨찾기 추가 칩
+      const cur = pi?.getValue();
+      if (cur && cur.lon != null && cur.lat != null && !Store.findByCoord(cur.lon, cur.lat)) {
+        addChip(barEl, '+ 즐겨찾기', () => {
+          showView('favs');
+          showFavForm({ preset: cur });
+        }).classList.add('chip-save');
+      }
+      if (!barEl.children.length) {
+        const empty = document.createElement('span');
+        empty.className = 'quick-fav-empty';
+        empty.textContent = '즐겨찾기를 추가하면 한 번 탭으로 채울 수 있어요';
+        barEl.appendChild(empty);
       }
     }
-    allRenders.push(render);
-    return { render };
-  }
-  function refreshAllBars() { allRenders.forEach((r) => r()); }
 
-  // ── 장소 입력 인스턴스 (모두 즐겨찾기 칩 바 부착) ────────
+    // 초기 와이어업 + 첫 입력 활성화
+    getInputs().forEach(wireInput);
+    syncTargetMark();
+    barRenders.push(render);
+
+    return { render, setActive, wireInput };
+  }
+
+  // ── 장소 입력 인스턴스 ─────────────────────────────────
   const PI = {};
-  function makeInput(role, placeholder, barOpts) {
+  function makeInput(role, placeholder) {
     const holder = document.querySelector(`[data-role="${role}"]`);
-    let helpers;
-    const pi = PlaceInput.create(holder, { placeholder, onChange: () => helpers?.render() });
-    helpers = attachFavoritesBar(pi, holder, barOpts);
+    const pi = PlaceInput.create(holder, { placeholder, onChange: () => refreshAllBars() });
+    pi.__holder = holder;
     return pi;
   }
-  PI.start   = makeInput('start',   '출발지 검색', { withCurrent: true,  withSave: true });
-  PI.dest    = makeInput('dest',    '도착지 검색', { withCurrent: false, withSave: true });
-  PI.m2start = makeInput('m2start', '출발지 검색', { withCurrent: true,  withSave: true });
-  PI.m2dest  = makeInput('m2dest',  '도착지 검색', { withCurrent: false, withSave: true });
+  PI.start   = makeInput('start',   '출발지 검색');
+  PI.dest    = makeInput('dest',    '도착지 검색');
+  PI.m2start = makeInput('m2start', '출발지 검색');
+  PI.m2dest  = makeInput('m2dest',  '도착지 검색');
+
+  // 메뉴2 경유지 입력은 사용자가 동적으로 추가/삭제 → 빠른 입력 바가 항상 최신 리스트를 보도록
+  // 여기서 미리 선언만 해두고, 실제 add/del 은 아래쪽 "경유지 동적 추가" 블록에서.
+  const wpInputs = [];
+
+  // 빠른 입력 바 마운트 — 메뉴별 단일 바, 활성 입력에 채워넣음.
+  // 메뉴1 은 입력이 고정(start/dest 2개) 이라 부수효과만 필요 → 변수 보관 안 함.
+  mountTopFavBar(
+    document.getElementById('m1-favbar'),
+    () => [PI.start, PI.dest],
+    { withCurrent: true },
+  );
+  // 메뉴2 는 경유지가 동적이라 wireInput / setActive 를 외부에서 호출.
+  const m2Bar = mountTopFavBar(
+    document.getElementById('m2-favbar'),
+    // 시각적 순서: 출발 → 경유지들 → 도착
+    () => [PI.m2start, ...wpInputs.map((w) => w.pi), PI.m2dest],
+    { withCurrent: true },
+  );
 
   // 진입 시 기본 출발지 = "집" 즐겨찾기(없으면 첫 즐겨찾기)
   (function applyDefaultStart() {
@@ -299,11 +358,20 @@
   })();
 
   // ── 즐겨찾기 추가/편집 (인라인 폼 — 모달 사용 안 함) ──
+  // 칩 자체엔 버튼을 넣지 않는다 (한글 두 글자도 좁아지면 깨짐).
+  // 라벨 탭 → 칩이 활성화되고, 그 아래 폼이 열려서 거기서 수정/저장/삭제.
   const favForm = document.getElementById('favForm');
   const favFormTitle = document.getElementById('favFormTitle');
   const favLabelInput = document.getElementById('favLabel');
+  const favDeleteBtn = document.getElementById('favDelete');
   let favPlacePI = null;
   let favEditing = null;
+
+  function markSelectedChip(id) {
+    document.querySelectorAll('#favGrid .fav-item').forEach((el) => {
+      el.classList.toggle('selected', el.dataset.id === id);
+    });
+  }
 
   function showFavForm({ preset = null, editing = null } = {}) {
     favEditing = editing;
@@ -313,7 +381,9 @@
     favPlacePI = PlaceInput.create(placeHolder, { placeholder: '장소 검색' });
     if (preset) favPlacePI.setValue(preset);
     else if (editing) favPlacePI.setValue({ name: editing.name, lon: editing.lon, lat: editing.lat, address: editing.address || '' });
+    favDeleteBtn.hidden = !editing;
     favForm.hidden = false;
+    markSelectedChip(editing?.id || null);
     setTimeout(() => { try { favLabelInput.focus(); } catch {} }, 60);
     favForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -321,6 +391,7 @@
     favForm.hidden = true;
     favEditing = null;
     favPlacePI = null;
+    markSelectedChip(null);
   }
 
   document.getElementById('favAddBtn').addEventListener('click', () => {
@@ -345,41 +416,44 @@
     renderFavorites();
     refreshAllBars();
   });
+  favDeleteBtn.addEventListener('click', () => {
+    if (!favEditing) return;
+    if (!confirm(`"${favEditing.label}" 즐겨찾기를 삭제할까요?`)) return;
+    Store.remove(favEditing.id);
+    hideFavForm();
+    renderFavorites();
+    refreshAllBars();
+    toast('삭제됨');
+  });
 
   // 즐겨찾기 화면을 떠나면 폼도 닫기
   document.querySelectorAll('[data-go="home"], #backBtn').forEach((b) => {
     b.addEventListener('click', hideFavForm);
   });
 
-  // 메인 즐겨찾기 그리드
+  // 메인 즐겨찾기 그리드 — 라벨만 박힌 칩
   function renderFavorites() {
     const grid = document.getElementById('favGrid');
     const cntEl = document.getElementById('favCount');
     const favs = Store.list();
     cntEl.textContent = `${favs.length}/${Store.MAX_FAVS}`;
     grid.innerHTML = favs.map((f) => `
-      <div class="fav-item" data-id="${f.id}">
+      <button type="button" class="fav-item" data-id="${f.id}">
         <span class="lbl">${escapeHtml(f.label)}</span>
-        <button type="button" class="ico-btn ico-edit" data-act="edit" title="편집">편집</button>
-        <button type="button" class="ico-btn ico-del"  data-act="del"  title="삭제">삭제</button>
-      </div>`).join('');
+      </button>`).join('');
   }
+  // 같은 칩 다시 탭 → 닫기. 다른 칩 탭 → 그 칩의 폼으로 전환.
   document.getElementById('favGrid').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-act]');
-    if (!btn) return;
-    const id = btn.closest('.fav-item')?.dataset.id;
+    const item = e.target.closest('.fav-item');
+    if (!item) return;
+    const id = item.dataset.id;
+    if (favEditing && favEditing.id === id && !favForm.hidden) {
+      hideFavForm();
+      return;
+    }
     const fav = Store.list().find((f) => f.id === id);
     if (!fav) return;
-    if (btn.dataset.act === 'del') {
-      if (confirm(`"${fav.label}" 즐겨찾기를 삭제할까요?`)) {
-        Store.remove(id);
-        renderFavorites();
-        refreshAllBars();
-        toast('삭제됨');
-      }
-    } else if (btn.dataset.act === 'edit') {
-      showFavForm({ editing: fav });
-    }
+    showFavForm({ editing: fav });
   });
 
   // ── 카테고리 칩 (메뉴1 키워드) ─────────────────────────
@@ -531,8 +605,8 @@
   });
 
   // ── 메뉴 2: 경유지 동적 추가 ────────────────────────────
+  // wpInputs 자체는 위쪽 PI 초기화 직후에 선언됨 (빠른 입력 바가 이 배열을 참조해야 해서)
   const wpWrap = document.getElementById('m2-waypoints');
-  const wpInputs = [];
   function addWaypoint() {
     if (wpInputs.length >= 5) return toast('경유지는 최대 5개입니다');
     const row = document.createElement('div');
@@ -545,15 +619,20 @@
     row.appendChild(holder);
     row.appendChild(del);
     wpWrap.appendChild(row);
-    const pi = PlaceInput.create(holder, { placeholder: `경유지 ${wpInputs.length + 1}` });
-    // 경유지에도 즐겨찾기 칩 부착 (현위치 X, 저장 X)
-    attachFavoritesBar(pi, holder, { withCurrent: false, withSave: false }).render();
+    const pi = PlaceInput.create(holder, { placeholder: `경유지 ${wpInputs.length + 1}`, onChange: () => refreshAllBars() });
+    pi.__holder = holder;
     const ref = { pi, row };
     wpInputs.push(ref);
+    // 새 경유지를 메뉴2 빠른 입력 바에 등록 + 활성 타겟으로 전환 + 칩 재렌더
+    m2Bar.wireInput(pi);
+    const idxInBar = [PI.m2start, ...wpInputs.map((w) => w.pi), PI.m2dest].indexOf(pi);
+    if (idxInBar >= 0) m2Bar.setActive(idxInBar);
+    m2Bar.render();
     del.addEventListener('click', () => {
       wpWrap.removeChild(row);
       const idx = wpInputs.indexOf(ref);
       if (idx >= 0) wpInputs.splice(idx, 1);
+      m2Bar.setActive(0); // 삭제 후 출발지로 활성 복귀
     });
   }
   document.getElementById('m2-add').addEventListener('click', addWaypoint);

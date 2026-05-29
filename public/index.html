@@ -33,14 +33,14 @@
           <button class="menu-card glass" data-go="menu1">
             <div class="menu-text">
               <strong>경유지 시간 비교</strong>
-              <span>회사 갈 때 가장 경유시간 짧은 스타벅스"</span>
+              <span>캠핑 갈 때 가장 경유시간 짧은 스타벅스</span>
             </div>
             <span class="chev">›</span>
           </button>
           <button class="menu-card glass" data-go="menu2">
             <div class="menu-text">
               <strong>멀티 경유지 최적화</strong>
-              <span>여러 곳을 들를 때 가장 빠른 순서</span>
+              <span>채원이와 채순이 누구를 먼저 태우면 더 빠를까?</span>
             </div>
             <span class="chev">›</span>
           </button>
@@ -75,7 +75,8 @@
               <div class="place-input" data-role="fav"></div>
             </div>
             <div class="form-actions">
-              <button id="favCancel" class="ghost-btn">취소</button>
+              <button id="favDelete" class="ghost-btn fav-delete-btn" hidden>삭제</button>
+              <button id="favCancel" class="ghost-btn fav-cancel-btn">취소</button>
               <button id="favSave" class="primary-btn">저장</button>
             </div>
           </div>
@@ -86,6 +87,11 @@
 
       <!-- 메뉴 1 -->
       <section data-view="menu1" class="view">
+        <!-- 빠른 입력: 활성화된 입력칸에 한 번 탭으로 채워지는 즐겨찾기/현위치 칩 -->
+        <div class="quick-fav">
+          <div class="quick-fav-label">빠른 입력</div>
+          <div class="fav-bar quick-fav-bar" id="m1-favbar"></div>
+        </div>
         <div class="field">
           <label>출발지</label>
           <div class="place-input" data-role="start"></div>
@@ -134,6 +140,11 @@
 
       <!-- 메뉴 2 -->
       <section data-view="menu2" class="view">
+        <!-- 빠른 입력: 활성화된 입력칸에 한 번 탭으로 채워지는 즐겨찾기/현위치 칩 -->
+        <div class="quick-fav">
+          <div class="quick-fav-label">빠른 입력</div>
+          <div class="fav-bar quick-fav-bar" id="m2-favbar"></div>
+        </div>
         <div class="field">
           <label>출발지</label>
           <div class="place-input" data-role="m2start"></div>
