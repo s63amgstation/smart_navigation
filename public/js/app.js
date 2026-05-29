@@ -392,11 +392,12 @@
     const keyword = m1kw.value.trim();
     if (!start || !dest) return toast('출발지와 도착지를 선택하세요');
 
-    // 검색 기록 저장 (시간 제외)
-    Store.histAdd({ kind: 'menu1', start, dest, keyword, predictionType: document.getElementById('m1-ptype').value });
-
     const btn = document.getElementById('m1-run');
     btn.disabled = true;
+    // 어떤 보조 동작(기록 저장 등)도 클릭 핸들러를 죽이면 안 됨 — 모두 try 안에서
+    try {
+      // 검색 기록 저장 (시간 제외) — 실패해도 핵심 흐름은 계속
+      try { Store.histAdd({ kind: 'menu1', start, dest, keyword, predictionType: document.getElementById('m1-ptype').value }); } catch {}
     if (m1MapEl.parentElement !== m1MapHome) m1MapHome.appendChild(m1MapEl);
     if (m1NavEl.parentElement !== m1NavHome) m1NavHome.appendChild(m1NavEl);
     m1MapEl.hidden = true;
@@ -405,7 +406,6 @@
     const time = document.getElementById('m1-time').value;
     const predictionType = document.getElementById('m1-ptype').value;
 
-    try {
       // 키워드 비어있으면 → 직접 경로만 1회 조회
       if (!keyword) {
         btn.innerHTML = '<span class="spinner"></span>직접 경로 계산 중…';
@@ -549,18 +549,17 @@
     if (!start || !dest) return toast('출발지와 도착지를 선택하세요');
     if (!waypoints.length) return toast('경유지를 1개 이상 선택하세요');
 
-    // 검색 기록 저장
-    Store.histAdd({ kind: 'menu2', start, dest, waypoints, predictionType: document.getElementById('m2-ptype').value });
-
     const btn = document.getElementById('m2-run');
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span>${factorial(waypoints.length)}가지 순서 비교 중…`;
+    try {
+      // 검색 기록 저장 — 실패해도 핵심 흐름은 계속
+      try { Store.histAdd({ kind: 'menu2', start, dest, waypoints, predictionType: document.getElementById('m2-ptype').value }); } catch {}
     if (m2MapEl.parentElement !== m2MapHome) m2MapHome.appendChild(m2MapEl);
     if (m2NavEl.parentElement !== m2NavHome) m2NavHome.appendChild(m2NavEl);
     m2MapEl.hidden = true;
     m2NavEl.hidden = true;
     m2ResultEl.innerHTML = '';
-    try {
       const { results, best, combinations } = await Api.optimize({
         start, dest, waypoints,
         time: document.getElementById('m2-time').value,

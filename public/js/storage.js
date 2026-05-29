@@ -72,25 +72,59 @@ window.Store = (function () {
     // ── 검색 기록 (최대 10개) ──────────────────────────
     histList() { return readHist(); },
     histAdd(entry) {
-      const e = { ...entry, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now() };
-      const k = histKey(e);
-      const all = readHist().filter((x) => histKey(x) !== k);
-      all.unshift(e);
-      writeHist(all);
-      return e;
+      // 어떤 경우에도 throw 하지 않는다 — 검색 버튼이 통째로 죽지 않게.
+      try {
+        const e = { ...entry, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ts: Date.now() };
+        const k = histKey(e);
+        if (!k) return e; // 신규 entry 가 유효하지 않으면 그냥 저장 건너뛰기
+        const all = readHist().filter((x) => {
+          const xk = histKey(x);
+          return xk && xk !== k;
+        });
+        all.unshift(e);
+        writeHist(all);
+        return e;
+      } catch (err) {
+        try { console.warn('histAdd 실패 (무시)', err); } catch {}
+        return entry;
+      }
     },
-    histRemove(id) { writeHist(readHist().filter((e) => e.id !== id)); },
-    histClear() { writeHist([]); },
+    histRemove(id) {
+      try { writeHist(readHist().filter((e) => e && e.id !== id)); } catch {}
+    },
+    histClear() {
+      try { writeHist([]); } catch {}
+    },
   };
 
   // 검색 기록 보조
   const HIST = 'sn.hist';
   const MAX_HIST = 10;
-  function readHist() {
-    try { return JSON.parse(localStorage.getItem(HIST) || '[]'); } catch { return []; }
+  // 유효한 좌표 객체인지 — 깨진 옛 엔트리(start/dest 가 null 등)를 솎아내기 위한 가드
+  function validPt(p) {
+    return p && typeof p === 'object' && p.lon != null && p.lat != null && !Number.isNaN(Number(p.lon)) && !Number.isNaN(Number(p.lat));
   }
-  function writeHist(arr) { localStorage.setItem(HIST, JSON.stringify(arr.slice(0, MAX_HIST))); }
+  function validEntry(e) {
+    if (!e || typeof e !== 'object') return false;
+    if (e.kind !== 'menu1' && e.kind !== 'menu2') return false;
+    if (!validPt(e.start) || !validPt(e.dest)) return false;
+    if (e.kind === 'menu2' && (!Array.isArray(e.waypoints) || !e.waypoints.every(validPt))) return false;
+    return true;
+  }
+  function readHist() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(HIST) || '[]');
+      if (!Array.isArray(raw)) return [];
+      // 깨진 엔트리는 조용히 버린다 — 다음 write 때 영구 청소됨
+      return raw.filter(validEntry);
+    } catch { return []; }
+  }
+  function writeHist(arr) {
+    try { localStorage.setItem(HIST, JSON.stringify(arr.slice(0, MAX_HIST))); } catch {}
+  }
   function histKey(e) {
+    // 호출 시 throw 하지 않게 — 깨진 엔트리는 null 로 표시
+    if (!validEntry(e)) return null;
     const c = (p) => `${Number(p.lon).toFixed(4)},${Number(p.lat).toFixed(4)}`;
     if (e.kind === 'menu1') return `m1|${c(e.start)}|${c(e.dest)}|${e.keyword || ''}`;
     const wp = (e.waypoints || []).map(c).sort().join(';');
