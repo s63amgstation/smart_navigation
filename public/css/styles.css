@@ -356,8 +356,17 @@ select.text-input { appearance: none; }
   padding-top: env(safe-area-inset-top);
   transform: translateX(100%);
   transition: transform 0.25s cubic-bezier(.2, .8, .2, 1);
+  /* display:flex 가 [hidden] { display:none } 을 덮어쓰므로 — 닫힌 상태에서도 패널이 계속 렌더된다.
+     iOS Safari 에서는 화면 밖으로 밀어낸 패널이 z-index:60 으로 떠 있어 터치를 가로채는 일이 있어
+     pointer-events 로 명시적으로 차단한다 (열렸을 때만 클릭 가능). */
+  pointer-events: none;
 }
-.hist-panel:not([hidden]) { transform: translateX(0); }
+.hist-panel:not([hidden]) {
+  transform: translateX(0);
+  pointer-events: auto;
+}
+/* 백드롭도 안전하게: [hidden] 일 때 절대 클릭을 받지 못하게 */
+.hist-backdrop[hidden] { display: none; pointer-events: none; }
 
 .hist-head {
   display: flex;
