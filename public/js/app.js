@@ -264,21 +264,28 @@
       if (!list.length) return;
       activeIdx = Math.max(0, Math.min(i, list.length - 1));
       syncTargetMark();
-      render();
+      // 시각 표시(.is-target)는 즉시, 칩바 재렌더는 다음 프레임으로 — focusin 으로
+      // 들어와 호출됐을 때 iOS Safari 가 키보드를 올리는 단계와 DOM 변경이 부딪히지 않게.
+      requestAnimationFrame(render);
     }
 
     // 입력박스(holderEl) 어디든 탭하면 그 박스가 활성 타겟이 된다.
     // 동적으로 추가되는 경유지 입력에도 재호출.
+    //
+    // ⚠️ pointerdown 은 절대 쓰지 말 것 — iOS Safari 에서 input 의 탭→포커스 시퀀스와
+    // 경합해 키보드가 안 뜨고 자동완성이 막힘. 대신:
+    //   - focusin : 사용자가 입력칸을 탭→포커스 받은 "자연스러운 뒤" 발화
+    //   - click   : selected 상태(.x 칩만 떠 있어 포커스 대상이 없을 때) 활성 전환 보조
     function wireInput(pi) {
       const holder = pi.__holder;
       if (!holder || holder.__wiredToBar === barEl) return;
       holder.__wiredToBar = barEl;
-      const onTouch = () => {
+      const onActivate = () => {
         const i = getInputs().indexOf(pi);
         if (i >= 0) setActive(i);
       };
-      holder.addEventListener('pointerdown', onTouch);
-      holder.addEventListener('focusin', onTouch);
+      holder.addEventListener('focusin', onActivate);
+      holder.addEventListener('click', onActivate);
     }
 
     function render() {
