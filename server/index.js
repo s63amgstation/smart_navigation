@@ -3,7 +3,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { searchPois, predictRoute, fmtMinutes } from './tmap.js';
+import { searchPois, predictRoute, optimizeRoute, fmtMinutes } from './tmap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -11,6 +11,10 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const hasKey = !!(process.env.TMAP_APP_KEY && !process.env.TMAP_APP_KEY.includes('여기에'));
+
+// 정적 자산 캐시버스터: 서버가 부팅할 때마다 새 값.
+// iOS Safari 가 옛 JS/CSS 를 끌어안고 안 놓는 문제 차단용.
+const ASSET_VER = String(Date.now());
 
 // 비동기 라우트 에러를 한 곳에서 처리하기 위한 래퍼
 const wrap = (fn) => (req, res) =>
@@ -58,44 +62,89 @@ function haversine(a, b) {
 }
 
 // ── 메뉴 1: 최소 경유지 찾기 ───────────────────────────────────────
-// body: { start, dest, keyword, time, predictionType, maxCandidates }
+// body: { start, dest, keyword, time, predictionType, maxCandidates, anchor }
+//   anchor: 'start' (출발지 중심) | 'dest' (도착지 중심).  기본 'start'.
 //
-// 전략: 출발지·도착지 양쪽에서 넓게 POI 를 수집하고(=도착지 옆/출발지 옆도 누락 없이 잡힘),
-// "직선 우회거리"(|S→P|+|P→D|-|S→D|)로 싸게 정렬한 뒤
-// 상위 N개에만 비싼 예측 API 를 돌린다.
+// 전략: 사용자가 고른 anchor 한쪽에서만 검색하되 반경을 단계적으로 늘림.
+//   Tier 1 — 선택한 anchor, 반경 = D × 20%
+//   Tier 2 — 같은 anchor, 반경 = D × 40%
+//   Tier 3 — 반대편 anchor, 반경 = D × 60% (응답에 안내문 첨부)
+// 각 tier 에서 결과가 나오는 즉시 그 단계로 확정. 후보는 "직선 우회거리"로
+// 미리 정렬해 상위 maxCandidates 개만 진짜 예측 API 를 돌린다.
 app.post(
   '/api/min-waypoint',
   wrap(async (req, res) => {
-    const { start, dest, keyword, time, predictionType = 'departure', maxCandidates = 5 } = req.body;
+    const {
+      start, dest, keyword, time,
+      predictionType = 'departure',
+      maxCandidates = 5,
+      anchor = 'start',
+    } = req.body;
     if (!start || !dest || !keyword) {
       return res.status(400).json({ error: 'start, dest, keyword 가 필요합니다.' });
     }
 
-    // 1) 양쪽에서 넓게 검색 (TMAP radius 는 km, 1~33)
+    const anchorPole = anchor === 'dest' ? 'dest' : 'start';
+    const oppositePole = anchorPole === 'start' ? 'dest' : 'start';
     const directM = haversine(start, dest);
-    const radius = Math.min(33, Math.max(5, Math.round(directM / 2000 + 3))); // 경로 절반 + 여유
-    const [nearStart, nearDest] = await Promise.all([
-      searchPois({ keyword, centerLon: start.lon, centerLat: start.lat, radius, count: 20 }),
-      searchPois({ keyword, centerLon: dest.lon, centerLat: dest.lat, radius, count: 20 }),
-    ]);
+    const directKm = directM / 1000;
 
-    // 2) 중복 제거 + 직선 우회거리 계산
+    // 반경(km)을 TMAP 한도 [1, 33] 으로 클램프
+    const clampKm = (km) => Math.min(33, Math.max(1, km));
+
+    // 단계 정의
+    const tiers = [
+      { tier: 1, pole: anchorPole,   pct: 0.2 },
+      { tier: 2, pole: anchorPole,   pct: 0.4 },
+      { tier: 3, pole: oppositePole, pct: 0.6 },
+    ];
+
+    // 단계적으로 첫 결과가 나올 때까지 시도
+    let chosen = null;
+    let pois = [];
+    let radius = 0;
+    for (const t of tiers) {
+      radius = clampKm(directKm * t.pct);
+      const center = t.pole === 'start' ? start : dest;
+      const found = await searchPois({
+        keyword,
+        centerLon: center.lon,
+        centerLat: center.lat,
+        radius,
+        count: 20,
+      });
+      if (found.length) {
+        chosen = t;
+        pois = found;
+        break;
+      }
+    }
+
+    if (!chosen) {
+      return res.json({
+        results: [],
+        best: null,
+        poolSize: 0,
+        anchor: anchorPole,
+        tier: 0,
+        note: '어느 반경으로 늘려도 후보를 찾지 못했어요. 키워드를 바꿔보세요.',
+      });
+    }
+
+    // 후보 풀: 직선 우회거리(|S→P|+|P→D|-|S→D|) 작은 순으로 사전 정렬해 상위만 진짜 예측
     const seen = new Set();
     const pool = [];
-    for (const p of [...nearStart, ...nearDest]) {
+    for (const p of pois) {
       const k = `${p.name}|${p.lon.toFixed(4)},${p.lat.toFixed(4)}`;
       if (seen.has(k)) continue;
       seen.add(k);
       const detour = haversine(start, p) + haversine(p, dest) - directM;
       pool.push({ ...p, detourM: Math.round(detour) });
     }
-    if (!pool.length) return res.json({ results: [], best: null, poolSize: 0 });
-
-    // 3) 직선 우회거리 작은 순 상위 N개만 진짜 예측
     pool.sort((a, b) => a.detourM - b.detourM);
     const candidates = pool.slice(0, maxCandidates);
 
-    // 베이스라인(경유 없음) 1회 계산 — "이만큼 더 걸린다"를 보여주기 위함
+    // 베이스라인(경유 없음) — "이만큼 더 걸린다" 비교용
     let baseline = null;
     try {
       const b = await predictRoute({ start, dest, waypoints: [], time, predictionType });
@@ -122,16 +171,26 @@ app.post(
     }
     results.sort((a, b) => (a.totalTime ?? Infinity) - (b.totalTime ?? Infinity));
     const best = results.find((r) => r.totalTime != null) || null;
+
+    // Tier 3 (반대편 폴백) 일 때만 안내문을 만들어 함께 내려준다.
+    // 예: anchor=start, 결과 없음 → dest 60% 에서 찾음
+    //     "출발지 부근에는 없어요. 가장 가까운 경유 경로는 '스타벅스 대전역점' 입니다."
+    let note = null;
+    if (chosen.tier === 3 && best && best.poi) {
+      const anchorLabel = anchorPole === 'start' ? '출발지' : '도착지';
+      const oppLabel = oppositePole === 'start' ? '출발지' : '도착지';
+      note = `${anchorLabel} 부근에는 없어요. ${oppLabel} 부근에서 가장 가까운 경유 경로는 '${best.poi.name}' 입니다.`;
+    }
+
     res.json({
       poolSize: pool.length,
       searchRadiusKm: radius,
+      anchor: anchorPole,
+      tier: chosen.tier,
+      note,
       baseline,
-      // extraSeconds 는 음수(이 경유가 직접 경로보다 빠름)일 수도 있어 raw 로만 내려준다.
-      // 표시 문구/색은 프론트에서 부호별로 결정한다.
-      results: results.map((r) => ({
-        ...r,
-        timeText: fmtMinutes(r.totalTime),
-      })),
+      // extraSeconds 부호 처리는 프론트가 함 (음수일 수도 있음).
+      results: results.map((r) => ({ ...r, timeText: fmtMinutes(r.totalTime) })),
       best: best ? { ...best, timeText: fmtMinutes(best.totalTime) } : null,
     });
   }),
@@ -139,48 +198,32 @@ app.post(
 
 // ── 메뉴 2: 멀티 경유지 순서 최적화 ────────────────────────────────
 // body: { start, dest, waypoints:[...], time, predictionType }
-// 경유지 순서 모든 조합(브루트포스, 최대 5개=120조합)을 예측해 최소 시간 순서를 찾는다.
+// TMAP routes/routeOptimization10 을 1회 호출해 TMAP 가 직접 계산한 최적 순서를 받는다.
+// (이전: 5! = 120회 브루트포스 → 현재: 1회 호출)
 app.post(
   '/api/optimize-waypoints',
   wrap(async (req, res) => {
-    const { start, dest, waypoints = [], time, predictionType = 'departure' } = req.body;
+    const { start, dest, waypoints = [], time } = req.body;
     if (!start || !dest || waypoints.length < 1) {
       return res.status(400).json({ error: 'start, dest, 그리고 1개 이상의 waypoints 가 필요합니다.' });
     }
-    if (waypoints.length > 5) {
-      return res.status(400).json({ error: '경유지는 최대 5개까지 지원합니다.' });
+    if (waypoints.length > 10) {
+      return res.status(400).json({ error: '경유지는 최대 10개까지 지원합니다.' });
     }
 
-    const orders = permutations(waypoints);
-    const results = [];
-    for (const order of orders) {
-      try {
-        const r = await predictRoute({ start, dest, waypoints: order, time, predictionType });
-        results.push({ order, totalTime: r.totalTime, totalDistance: r.totalDistance, path: r.path });
-      } catch (e) {
-        results.push({ order, error: e.message });
-      }
-    }
-    // 짧은 시간 순으로 정렬
-    results.sort((a, b) => (a.totalTime ?? Infinity) - (b.totalTime ?? Infinity));
-    const best = results.find((r) => !r.error && r.totalTime != null) || null;
-    res.json({
-      best: best ? { ...best, timeText: fmtMinutes(best.totalTime) } : null,
-      results: results.map((r) => ({ ...r, timeText: fmtMinutes(r.totalTime) })),
-      combinations: orders.length,
-    });
+    const opt = await optimizeRoute({ start, dest, waypoints, time });
+    const result = {
+      order: opt.order,
+      totalTime: opt.totalTime,
+      totalDistance: opt.totalDistance,
+      path: opt.path,
+      timeText: fmtMinutes(opt.totalTime),
+    };
+    // 프론트가 results[] 와 best 를 같이 읽으므로 동일 객체로 채워 호환 유지.
+    // combinations 는 표시용으로만 의미가 있는데, 최적화 1회 호출이므로 1.
+    res.json({ best: result, results: [result], combinations: 1 });
   }),
 );
-
-function permutations(arr) {
-  if (arr.length <= 1) return [arr];
-  const out = [];
-  arr.forEach((item, i) => {
-    const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
-    for (const p of permutations(rest)) out.push([item, ...p]);
-  });
-  return out;
-}
 
 // index.html 은 직접 다뤄 TMAP appKey 를 SDK 스크립트 태그로 주입한다.
 // (TMAP SDK 는 HTML 파싱 단계의 document.write 로 실제 SDK 를 가져오기 때문에
@@ -189,7 +232,15 @@ const INDEX_PATH = path.join(__dirname, '..', 'public', 'index.html');
 async function serveIndex(_req, res) {
   try {
     const html = await fs.readFile(INDEX_PATH, 'utf-8');
-    res.type('html').send(html.replaceAll('__TMAP_KEY__', hasKey ? process.env.TMAP_APP_KEY : ''));
+    res
+      // 페이지 자체는 절대 캐시하지 않는다 — 안에 박힌 자산 버전이 새로 와야 하므로.
+      .set('Cache-Control', 'no-store')
+      .type('html')
+      .send(
+        html
+          .replaceAll('__TMAP_KEY__', hasKey ? process.env.TMAP_APP_KEY : '')
+          .replaceAll('__ASSET_VER__', ASSET_VER),
+      );
   } catch (e) {
     res.status(500).send(e.message);
   }
@@ -197,8 +248,19 @@ async function serveIndex(_req, res) {
 app.get('/', serveIndex);
 app.get('/index.html', serveIndex);
 
-// 정적 프론트 서빙 (그 외 파일)
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// 정적 프론트 서빙 (그 외 파일).
+// JS/CSS 는 항상 재검증하도록 강제 (?v= 쿼리로 cache-busting 도 같이 걸려있음).
+app.use(
+  express.static(path.join(__dirname, '..', 'public'), {
+    etag: true,
+    lastModified: true,
+    setHeaders(res, filePath) {
+      if (/\.(js|css)$/.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }),
+);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  Smart Navigation 서버 실행: http://localhost:${PORT}`);

@@ -4,22 +4,47 @@ window.Store = (function () {
   const FAVS = 'sn.favs'; // 즐겨찾기 배열 (최대 10)
   const MAX_FAVS = 10;
 
+  // ── 저장소 폴백 체인 ─────────────────────────────────────
+  // localStorage 가 막혀있어도(꽉참 / private 탭 / iOS 정책) 절대 throw 하지 않고
+  // sessionStorage → in-memory 순으로 떨어진다. 결과적으로 검색 기록이 어디든
+  // 한 군데에는 무조건 들어간다.
+  const storage = (function pickStorage() {
+    const tryStore = (s) => {
+      try {
+        const k = '__sn_probe__';
+        s.setItem(k, '1');
+        s.removeItem(k);
+        return s;
+      } catch { return null; }
+    };
+    return tryStore(window.localStorage) || tryStore(window.sessionStorage) || (function () {
+      const mem = Object.create(null);
+      return {
+        getItem(k) { return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+        setItem(k, v) { mem[k] = String(v); },
+        removeItem(k) { delete mem[k]; },
+      };
+    })();
+  })();
+  // 다른 모듈에서 디버깅용으로 어느 저장소를 쓰는지 알 수 있게 노출
+  try { window.__snStorageKind = storage === window.localStorage ? 'local' : storage === window.sessionStorage ? 'session' : 'memory'; } catch {}
+
   function readFavs() {
     try {
-      return JSON.parse(localStorage.getItem(FAVS) || '[]');
+      return JSON.parse(storage.getItem(FAVS) || '[]');
     } catch {
       return [];
     }
   }
   function writeFavs(arr) {
-    localStorage.setItem(FAVS, JSON.stringify(arr.slice(0, MAX_FAVS)));
+    try { storage.setItem(FAVS, JSON.stringify(arr.slice(0, MAX_FAVS))); } catch {}
   }
 
   // 처음 한 번: 기존 home 항목이 있고 favs 가 비어있으면 favs 로 이주(label="집")
   (function migrate() {
-    if (localStorage.getItem(FAVS)) return;
+    if (storage.getItem(FAVS)) return;
     try {
-      const home = JSON.parse(localStorage.getItem(HOME) || 'null');
+      const home = JSON.parse(storage.getItem(HOME) || 'null');
       if (home && home.lon != null && home.lat != null) {
         writeFavs([{ id: 'home0', label: '집', name: home.name, lon: home.lon, lat: home.lat, address: home.address || '' }]);
       }
@@ -113,14 +138,14 @@ window.Store = (function () {
   }
   function readHist() {
     try {
-      const raw = JSON.parse(localStorage.getItem(HIST) || '[]');
+      const raw = JSON.parse(storage.getItem(HIST) || '[]');
       if (!Array.isArray(raw)) return [];
       // 깨진 엔트리는 조용히 버린다 — 다음 write 때 영구 청소됨
       return raw.filter(validEntry);
     } catch { return []; }
   }
   function writeHist(arr) {
-    try { localStorage.setItem(HIST, JSON.stringify(arr.slice(0, MAX_HIST))); } catch {}
+    try { storage.setItem(HIST, JSON.stringify(arr.slice(0, MAX_HIST))); } catch {}
   }
   function histKey(e) {
     // 호출 시 throw 하지 않게 — 깨진 엔트리는 null 로 표시

@@ -205,7 +205,12 @@
   function attachFavoritesBar(placeInput, holderEl, opts = {}) {
     const row = document.createElement('div');
     row.className = 'fav-bar';
-    holderEl.parentElement.insertBefore(row, holderEl.nextSibling);
+    // 메뉴2 경유지 입력은 holderEl 의 부모가 .wp-row (display:flex) 라서, 거기 직접 끼우면
+    // fav-bar 가 flex 자식으로 들어가 텍스트박스를 옆에서 짜부러뜨림.
+    // → wp-row 바깥(=다음 형제)으로 올려서 입력 한 줄 아래에 깔리게 함.
+    const wpRow = holderEl.closest('.wp-row');
+    const anchor = wpRow || holderEl;
+    anchor.parentElement.insertBefore(row, anchor.nextSibling);
     function render() {
       row.innerHTML = '';
       if (opts.withCurrent) {
@@ -347,6 +352,20 @@
     document.getElementById('m1-chips').appendChild(chip);
   });
 
+  // ── 검색 anchor (출발지 중심 / 도착지 중심) ─────────────
+  let m1Anchor = 'start';
+  const m1AnchorEl = document.getElementById('m1-anchor');
+  m1AnchorEl.addEventListener('click', (e) => {
+    const opt = e.target.closest('.ax-opt');
+    if (!opt) return;
+    m1Anchor = opt.dataset.anchor === 'dest' ? 'dest' : 'start';
+    m1AnchorEl.querySelectorAll('.ax-opt').forEach((b) => {
+      const on = b.dataset.anchor === m1Anchor;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+  });
+
   // ── 메뉴 1 ─────────────────────────────────────────────
   let m1State = { results: [], start: null, dest: null, selectedIdx: -1 };
   const m1ResultEl = document.getElementById('m1-result');
@@ -423,13 +442,16 @@
 
       // 경유지 후보 비교
       btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
-      const { results, best, baseline } = await Api.minWaypoint({
+      const { results, best, baseline, note } = await Api.minWaypoint({
         start, dest, keyword, time, predictionType, maxCandidates: 5,
+        anchor: m1Anchor,
       });
       if (!results.length) {
-        m1ResultEl.innerHTML = '<div class="hint">근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.</div>';
+        m1ResultEl.innerHTML = `<div class="hint">${escapeHtml(note || '근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.')}</div>`;
         return;
       }
+      // 60% 반대편 폴백 안내문 (서버가 tier=3 일 때만 채워줌)
+      const noteHtml = note ? `<div class="result-note">⚠️ ${escapeHtml(note)}</div>` : '';
       if (!best) {
         const firstErr = results.find((r) => r.error)?.error || '경로 계산 실패';
         m1ResultEl.innerHTML = `<div class="hint">경로 계산이 모두 실패했어요. (${firstErr})</div>`;
@@ -441,7 +463,7 @@
           <div class="res-rank" style="color:#6b7280">기준 (경유 없이 바로 이동)</div>
           <div class="res-time">${baseline.timeText} · ${km(baseline.totalDistance)}</div>
         </div>` : '';
-      m1ResultEl.innerHTML = baselineCard + results.map((r, i) => {
+      m1ResultEl.innerHTML = noteHtml + baselineCard + results.map((r, i) => {
         if (r.error) {
           return `<div class="res-card" data-idx="${i}" data-err="1">
             <div class="res-rank">${i + 1}순위</div>
@@ -560,7 +582,7 @@
     m2MapEl.hidden = true;
     m2NavEl.hidden = true;
     m2ResultEl.innerHTML = '';
-      const { results, best, combinations } = await Api.optimize({
+      const { results, best } = await Api.optimize({
         start, dest, waypoints,
         time: document.getElementById('m2-time').value,
         predictionType: document.getElementById('m2-ptype').value,
@@ -570,7 +592,9 @@
         return;
       }
       m2State = { results, start, dest, selectedIdx: -1 };
-      const header = `<div class="hint">${combinations}가지 순서를 모두 계산 — 시간 짧은 순으로 정렬. 카드 탭하면 그 순서의 지도가 펼쳐집니다.</div>`;
+      // 백엔드가 routeOptimization10 한 번으로 TMAP 최적 순서를 받아오므로 결과는 1개.
+      // (옛 N! brute-force 와 같은 응답 shape 를 유지해서 카드 렌더링 로직은 그대로.)
+      const header = `<div class="hint">TMAP 가 계산한 최적 방문 순서예요. 카드 탭하면 지도가 펼쳐집니다.</div>`;
       m2ResultEl.innerHTML = header + results.map((r, i) => {
         const seqParts = ['<b>출발</b>'];
         r.order.forEach((w, j) => seqParts.push(`<b>경유${j + 1}</b> <span style="color:#6b7280">(${escapeHtml(w.name)})</span>`));
@@ -578,13 +602,12 @@
         const seq = seqParts.join(' → ');
         if (r.error) {
           return `<div class="res-card" data-idx="${i}" data-err="1">
-            <div class="res-rank">${i + 1}위</div>
+            <div class="res-rank">최적 순서</div>
             <div class="res-name" style="font-size:13px;font-weight:500">${seq}</div>
             <div class="res-meta" style="color:#b91c1c">계산 실패: ${escapeHtml(r.error)}</div></div>`;
         }
-        const isBest = best && r.totalTime === best.totalTime;
-        return `<div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
-          <div class="res-rank">${i + 1}위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
+        return `<div class="res-card clickable best" data-idx="${i}">
+          <div class="res-rank">최적 순서<span class="badge">TMAP 추천</span><span class="tap-hint">탭하면 지도</span></div>
           <div class="res-name" style="font-size:13px;font-weight:500;line-height:1.5">${seq}</div>
           <div class="res-time">${r.timeText} · ${km(r.totalDistance)}</div>
         </div>`;

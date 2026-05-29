@@ -120,6 +120,47 @@ select.text-input { appearance: none; }
 }
 .chip:active { background: var(--bg); }
 
+/* 메뉴1 검색 중심(출발/도착) 세그먼티드 컨트롤 */
+.anchor-toggle {
+  display: flex;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 3px;
+  gap: 3px;
+}
+.anchor-toggle .ax-opt {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: 9px;
+  padding: 10px 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.anchor-toggle .ax-opt.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(31, 111, 235, 0.25);
+}
+
+/* 메뉴1 안내문 — 60% 폴백 시 결과 위에 보여줌 */
+.result-note {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
 /* 버튼 */
 .primary-btn {
   width: 100%;
@@ -675,14 +716,27 @@ body.home-active .icon-btn { color: #fff; }
 .fav-form .form-actions .ghost-btn { flex: 0 0 90px; color: #b91c1c; border-color: #f3c9c9; }
 .fav-form .form-actions .primary-btn { flex: 1; margin-top: 0; }
 
-/* 검색 입력에 붙는 즐겨찾기 칩 행 */
+/* 검색 입력 아래에 붙는 즐겨찾기 칩 행 — 한 줄, 가로 스크롤 */
 .fav-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   margin-top: 8px;
+  /* 가로 스크롤: 칩이 많아도 텍스트박스 폭만큼만 차지 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  /* iOS Safari 의 스크롤바를 숨겨 깔끔하게 — 손가락 스와이프로만 이동 */
+  scrollbar-width: none;
+  /* 짤리는 칩이 있다는 힌트로 오른쪽 끝을 살짝 페이드 */
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  padding: 2px 16px 2px 0; /* 마지막 칩이 마스크에 너무 잘리지 않도록 여유 */
 }
+.fav-bar::-webkit-scrollbar { display: none; }
 .fav-bar .chip {
+  flex: 0 0 auto;       /* 줄어들지 않고 한 줄에 그대로 */
+  white-space: nowrap;
   font-size: 12.5px;
   padding: 6px 11px;
   background: #f1f5fb;

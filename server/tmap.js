@@ -23,6 +23,16 @@ export function toTmapTime(isoLocal) {
   );
 }
 
+// 다중경유지 API 의 시간 형식: yyyyMMddHHmm (초·타임존 없음)
+export function toTmapStartTime(isoLocal) {
+  const d = isoLocal ? new Date(isoLocal) : new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}`
+  );
+}
+
 // 본문이 비었거나 손상된 인코딩일 때 사람이 읽을 수 있는 메시지로 대체
 function safeBody(text) {
   if (!text) return '(빈 응답)';
@@ -75,37 +85,204 @@ export async function searchPois({ keyword, centerLon, centerLat, radius = 0, co
   });
 }
 
-// ── 예측(타임머신) 경로 ───────────────────────────────────────────
-// 주의: TMAP routes/prediction 은 경유지 파라미터를 무시한다(실측 확인).
-// 그래서 경유지가 있으면 구간(leg)별로 나눠 호출하고 합산한다.
-// - predictionType='departure': 출발시각이 주어짐. 각 leg 도착시각을 다음 leg 출발시각으로 체이닝.
-// - predictionType='arrival':   도착시각이 주어짐. 역방향으로 leg 출발시각을 거슬러 올라가며 체이닝.
+// ── 경로 디스패처 ────────────────────────────────────────────────
+// 호출 측에서 보는 API 는 그대로 유지하면서 내부적으로 두 엔드포인트를 갈라쓴다:
+//
+//  ┌────────────────────────────────┬──────────────────────────────┐
+//  │ 입력                           │ 내부 호출                    │
+//  ├────────────────────────────────┼──────────────────────────────┤
+//  │ 경유지 없음                    │ routes/prediction (단일 leg) │
+//  │ 경유지 있음 + 출발시각 모드    │ routes/routeSequential30 1회 │
+//  │ 경유지 있음 + 도착시각 모드    │ leg-split (sequential 가      │
+//  │                                │  startTime 만 받음 → 폴백)   │
+//  └────────────────────────────────┴──────────────────────────────┘
+//
+// 모든 케이스에서 반환 shape 는 동일: { totalTime, totalDistance, totalFare, path, legs }
 export async function predictRoute({ start, dest, waypoints = [], time, predictionType = 'departure' }) {
-  const pts = [start, ...waypoints.slice(0, 5), dest];
-  const legs = [];
-
-  if (predictionType === 'arrival') {
-    let curArr = time;
-    for (let i = pts.length - 1; i >= 1; i--) {
-      const leg = await predictLeg(pts[i - 1], pts[i], curArr, 'arrival');
-      legs.unshift(leg);
-      curArr = leg.departureTime || curArr;
-    }
-  } else {
-    let curDep = time;
-    for (let i = 1; i < pts.length; i++) {
-      const leg = await predictLeg(pts[i - 1], pts[i], curDep, 'departure');
-      legs.push(leg);
-      curDep = leg.arrivalTime || curDep;
-    }
+  // 1) 경유지 없음 → 기존 단일 leg 예측 (변경 없음)
+  if (!waypoints.length) {
+    const leg = await predictLeg(start, dest, time, predictionType);
+    return {
+      totalTime: leg.totalTime,
+      totalDistance: leg.totalDistance,
+      totalFare: leg.totalFare,
+      path: leg.path,
+      legs: [{ totalTime: leg.totalTime, totalDistance: leg.totalDistance }],
+    };
   }
 
+  // 2) 경유지 있고 출발시각 모드 → routeSequential30 한 방
+  if (predictionType !== 'arrival') {
+    return sequentialRoute({ start, dest, waypoints, time });
+  }
+
+  // 3) 경유지 있고 도착시각 모드 → leg-split (routeSequential30 미지원)
+  return predictRouteLegSplit({ start, dest, waypoints, time });
+}
+
+// ── leg-split 폴백: 도착시각 + 경유지 케이스 전용 ────────────────
+// (routes/prediction 이 경유지를 무시하므로 구간별로 쪼개 호출, 도착시각을 거꾸로 체이닝)
+async function predictRouteLegSplit({ start, dest, waypoints, time }) {
+  const pts = [start, ...waypoints.slice(0, 5), dest];
+  const legs = [];
+  let curArr = time;
+  for (let i = pts.length - 1; i >= 1; i--) {
+    const leg = await predictLeg(pts[i - 1], pts[i], curArr, 'arrival');
+    legs.unshift(leg);
+    curArr = leg.departureTime || curArr;
+  }
   return {
     totalTime: legs.reduce((s, l) => s + (l.totalTime || 0), 0),
     totalDistance: legs.reduce((s, l) => s + (l.totalDistance || 0), 0),
     totalFare: legs.reduce((s, l) => s + (l.totalFare || 0), 0) || null,
     path: legs.flatMap((l) => l.path),
     legs: legs.map((l) => ({ totalTime: l.totalTime, totalDistance: l.totalDistance })),
+  };
+}
+
+// ── 경유지 순서 최적화 10 (TMAP routes/routeOptimization10) ───────
+// 입력 viaPoints 의 순서와 관계없이 TMAP 가 최적 순서를 직접 계산해 돌려준다.
+// 응답 features 의 properties.index 가 최적 순서, properties.viaPointId 로 원본 매핑.
+// 한 번의 호출로 끝나서 메뉴2(멀티 경유지 최적화)에 사용.
+export async function optimizeRoute({
+  start, dest, waypoints = [], time, searchOption = '0',
+}) {
+  if (!waypoints.length) {
+    // 경유지 없으면 최적화할 게 없음 — 직접 경로로 폴백
+    const leg = await predictLeg(start, dest, time, 'departure');
+    return {
+      order: [],
+      totalTime: leg.totalTime,
+      totalDistance: leg.totalDistance,
+      totalFare: leg.totalFare,
+      path: leg.path,
+    };
+  }
+
+  const body = {
+    startName: start.name || '출발',
+    startX: String(start.lon),
+    startY: String(start.lat),
+    endName: dest.name || '도착',
+    endX: String(dest.lon),
+    endY: String(dest.lat),
+    startTime: toTmapStartTime(time),
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+    searchOption,
+    carType: 0,
+    viaPoints: waypoints.slice(0, 10).map((w, i) => ({
+      viaPointId: `vp${i}`,
+      viaPointName: (w.name || `경유${i + 1}`).slice(0, 50),
+      viaX: String(w.lon),
+      viaY: String(w.lat),
+    })),
+  };
+
+  const res = await fetch(`${BASE}/routes/routeOptimization10?version=1`, {
+    method: 'POST',
+    headers: {
+      appKey: appKey(),
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`경유지 순서 최적화 실패 (${res.status}): ${safeBody(text)}`);
+  }
+  if (!text) throw new Error('경유지 순서 최적화 응답이 비어있음');
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('경유지 순서 최적화 응답 파싱 실패');
+  }
+
+  // 응답에서 최적화된 viaPointId 순서를 뽑아 원본 waypoint 로 되짚는다.
+  // Point 피처들 중 우리가 부여한 vpN ID 가 properties.viaPointId 에 들어있는 것만 골라
+  // properties.index 로 정렬 → 그 순서가 곧 TMAP 이 추천하는 방문 순서.
+  const features = Array.isArray(json?.features) ? json.features : [];
+  const orderedIds = features
+    .filter((f) => f?.geometry?.type === 'Point' && typeof f?.properties?.viaPointId === 'string')
+    .filter((f) => /^vp\d+$/.test(f.properties.viaPointId))
+    .sort((a, b) => (Number(a.properties.index) || 0) - (Number(b.properties.index) || 0))
+    .map((f) => f.properties.viaPointId);
+  const seen = new Set();
+  const order = orderedIds
+    .filter((id) => (seen.has(id) ? false : (seen.add(id), true)))
+    .map((id) => waypoints[Number(id.slice(2))])
+    .filter(Boolean);
+
+  const r = parseRoute(json);
+  return {
+    // 매핑이 완전치 않으면 입력 순서로 폴백 (시간/거리는 어쨌든 정답이므로 보여줌)
+    order: order.length === waypoints.length ? order : waypoints,
+    totalTime: r.totalTime,
+    totalDistance: r.totalDistance,
+    totalFare: r.totalFare,
+    path: r.path,
+  };
+}
+
+// ── 다중 경유지 안내 30 (TMAP routes/routeSequential30) ──────────
+// 경유지 최대 30개, startTime(yyyyMMddHHmm) 으로 미래 출발시각 반영, 한 번에 응답.
+// docs: https://tmap-skopenapi.readme.io/reference/다중-경유지-안내-10
+export async function sequentialRoute({
+  start, dest, waypoints = [], time, searchOption = '0',
+}) {
+  const body = {
+    startName: start.name || '출발',
+    startX: String(start.lon),
+    startY: String(start.lat),
+    endName: dest.name || '도착',
+    endX: String(dest.lon),
+    endY: String(dest.lat),
+    startTime: toTmapStartTime(time),
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+    searchOption, // 0:교통최적+추천(기본) / 1:무료우선 / 2:최소시간 / 3:초보
+    viaPoints: waypoints.slice(0, 30).map((w, i) => ({
+      viaPointId: `vp${i}`,
+      viaPointName: (w.name || `경유${i + 1}`).slice(0, 50),
+      viaX: String(w.lon),
+      viaY: String(w.lat),
+    })),
+  };
+
+  const res = await fetch(`${BASE}/routes/routeSequential30?version=1`, {
+    method: 'POST',
+    headers: {
+      appKey: appKey(),
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`다중 경유 경로 실패 (${res.status}): ${safeBody(text)}`);
+  }
+  if (!text) {
+    const empty = parseRoute({});
+    return { ...empty, legs: [] };
+  }
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('다중 경유 경로 응답 파싱 실패 (본문이 JSON 이 아님)');
+  }
+  const r = parseRoute(json);
+  return {
+    totalTime: r.totalTime,
+    totalDistance: r.totalDistance,
+    totalFare: r.totalFare,
+    path: r.path,
+    // 경유지별 구간 시간/거리는 응답 features 의 properties.pointIndex/index 로도 잡히지만,
+    // 화면에서 합계만 쓰므로 일단 빈 배열.
+    legs: [],
   };
 }
 
