@@ -19,6 +19,7 @@ window.Api = (function () {
 
   return {
     config: () => get('/api/config'),
+    reverseGeocode: (lat, lon) => get(`/api/reverse-geocode?lat=${lat}&lon=${lon}`),
     pois: (keyword, center) => {
       const p = new URLSearchParams({ keyword });
       if (center) {

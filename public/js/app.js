@@ -135,19 +135,17 @@
     const timeFull = `${ampm} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
     return [dateFull, timeFull];
   }
-  // ── 시간 픽커 (지금 / 나중에 출발) ─────────────────────
-  // 두 모드를 토글:
-  //   'now'    : 시계만 표시, 1분마다 갱신. 서버엔 time 미전송, mode='now'.
-  //   'future' : datetime-local 노출, 10분 단위 라운딩 + 과거 차단. mode='future'.
+  // ── 시간 픽커 (지금 / 나중에 출발) — 2-세그먼트 ─────────
+  // 두 행이 항상 같이 보임. 활성만 진하고 비활성은 흐릿(opacity + grayscale).
+  // - 지금 행 탭 → mode='now', 시계는 1분마다 자동 갱신
+  // - 나중에 행 탭 → mode='future', 네이티브 datetime picker 즉시 팝
   function bindTimePicker(wrap) {
-    const nowRow = wrap.querySelector('.tp-row-now');
-    const futureRow = wrap.querySelector('.tp-row-future');
+    const segNow = wrap.querySelector('.tp-seg-now');
+    const segFuture = wrap.querySelector('.tp-seg-future');
     const clockEl = wrap.querySelector('.tp-now-clock');
     const dtInput = wrap.querySelector('.dt-native');
     const dtDateEl = wrap.querySelector('.dt-d-date');
     const dtTimeEl = wrap.querySelector('.dt-d-time');
-    const laterBtn = wrap.querySelector('.tp-later');
-    const backBtn = wrap.querySelector('.tp-back-now');
 
     let mode = 'now';
     let clockTimer = null;
@@ -158,7 +156,7 @@
       const h12 = h % 12 || 12;
       return `${ampm} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
-    function tick() { if (mode === 'now') clockEl.textContent = fmtClock(); }
+    function tickClock() { clockEl.textContent = fmtClock(); }
     function syncFutureDisplay() {
       const [d, t] = fmtDtPretty(dtInput.value);
       dtDateEl.textContent = d;
@@ -174,45 +172,44 @@
     }
     function setMode(m) {
       mode = m;
-      if (m === 'now') {
-        nowRow.hidden = false;
-        futureRow.hidden = true;
-        laterBtn.hidden = false;
-        backBtn.hidden = true;
-        tick();
-        clearInterval(clockTimer);
-        clockTimer = setInterval(tick, 60_000);
-      } else {
-        nowRow.hidden = true;
-        futureRow.hidden = false;
-        laterBtn.hidden = true;
-        backBtn.hidden = false;
-        clearInterval(clockTimer);
-        ensureFutureValid();
-        syncFutureDisplay();
-      }
+      segNow.classList.toggle('active', mode === 'now');
+      segFuture.classList.toggle('active', mode === 'future');
     }
 
-    laterBtn.addEventListener('click', () => {
+    // 시계는 mode 와 무관하게 늘 돈다 (비활성일 때도 흐릿하게 보여야 하므로)
+    tickClock();
+    clockTimer = setInterval(tickClock, 60_000);
+    // 나중에 출발의 기본값도 화면에 미리 채워둠 (다음 10분 슬롯)
+    ensureFutureValid();
+    syncFutureDisplay();
+
+    segNow.addEventListener('click', () => setMode('now'));
+    segFuture.addEventListener('click', () => {
+      const wasActive = mode === 'future';
       setMode('future');
-      // iOS Safari 에서 토글 직후 네이티브 datetime picker 를 즉시 띄움
-      setTimeout(() => {
-        try { dtInput.showPicker?.(); } catch {}
-        dtInput.focus?.();
-      }, 50);
+      // 활성화된 직후엔 네이티브 picker 가 자동으로 뜨도록 강제 호출
+      // (이미 활성이었으면 native input 의 자체 tap 이 처리하므로 한번만)
+      if (!wasActive) {
+        setTimeout(() => {
+          try { dtInput.showPicker?.(); } catch {}
+          dtInput.focus?.();
+        }, 50);
+      }
     });
-    backBtn.addEventListener('click', () => setMode('now'));
-    dtInput.addEventListener('change', () => { ensureFutureValid(); syncFutureDisplay(); });
+    dtInput.addEventListener('change', () => {
+      setMode('future'); // 변경 자체가 future 선택 의도
+      ensureFutureValid();
+      syncFutureDisplay();
+    });
     dtInput.addEventListener('focus', () => { dtInput.min = localDtCeil(); });
 
     setMode('now');
 
     return {
       getMode: () => mode,
-      // mode='now' 면 서버가 무시 (현재시각으로 routes 호출). future 면 yyyy-MM-ddTHH:mm 그대로.
       getTime: () => (mode === 'future' ? dtInput.value : null),
-      // 검색 기록에서 가져온 entry 적용 시 사용 — 무조건 '지금'으로 초기화
       reset: () => setMode('now'),
+      destroy: () => clearInterval(clockTimer),
     };
   }
 
@@ -225,7 +222,7 @@
     if (!navigator.geolocation) return toast('이 브라우저는 위치 정보를 지원하지 않습니다');
     toast('현재 위치 확인 중…');
     navigator.geolocation.getCurrentPosition(
-      (pos) => placeInput.setValue({ name: '📍 내 현재 위치', lon: pos.coords.longitude, lat: pos.coords.latitude, address: '' }),
+      (pos) => placeInput.setValue({ name: '내 현재 위치', lon: pos.coords.longitude, lat: pos.coords.latitude, address: '' }),
       (err) => {
         const m = { 1: '위치 권한이 거부됨. iPhone: 설정 > Safari > 위치 → 허용', 2: '현재 위치 확인 불가', 3: '위치 확인 시간 초과' };
         toast(m[err.code] || '위치 확인 실패');
@@ -235,15 +232,7 @@
   }
 
   // ── 즐겨찾기 칩 행 (모든 검색 입력 아래에 붙음) ─────────
-  function iconOf(label) {
-    const s = String(label || '');
-    if (s.includes('집')) return '🏠';
-    if (s.includes('회사')) return '🏢';
-    if (s.includes('학교')) return '📚';
-    if (s.includes('병원')) return '🏥';
-    if (s.includes('카페') || s.includes('스타벅스')) return '☕';
-    return '⭐';
-  }
+  // 심플 추구 — 이모지 제거. 라벨(집/회사/학교 등)만으로도 충분히 식별됨.
   function addChip(parent, text, onClick, title) {
     const b = document.createElement('button');
     b.type = 'button';
@@ -267,15 +256,15 @@
     function render() {
       row.innerHTML = '';
       if (opts.withCurrent) {
-        addChip(row, '📍 현위치', () => useCurrentLocation(placeInput)).classList.add('chip-cur');
+        addChip(row, '현위치', () => useCurrentLocation(placeInput)).classList.add('chip-cur');
       }
       Store.list().forEach((f) => {
-        addChip(row, `${iconOf(f.label)} ${f.label}`, () => placeInput.setValue(f), f.name);
+        addChip(row, f.label, () => placeInput.setValue(f), f.name);
       });
       if (opts.withSave) {
         const cur = placeInput.getValue();
         if (cur && cur.lon != null && cur.lat != null && !Store.findByCoord(cur.lon, cur.lat)) {
-          addChip(row, '⭐ 즐겨찾기 추가', () => {
+          addChip(row, '즐겨찾기 추가', () => {
             showView('favs');
             showFavForm({ preset: cur });
           }).classList.add('chip-save');
@@ -370,10 +359,9 @@
     cntEl.textContent = `${favs.length}/${Store.MAX_FAVS}`;
     grid.innerHTML = favs.map((f) => `
       <div class="fav-item" data-id="${f.id}">
-        <span>${iconOf(f.label)}</span>
         <span class="lbl">${escapeHtml(f.label)}</span>
-        <button type="button" class="ico-btn ico-edit" data-act="edit" title="편집">✎</button>
-        <button type="button" class="ico-btn ico-del"  data-act="del"  title="삭제">✕</button>
+        <button type="button" class="ico-btn ico-edit" data-act="edit" title="편집">편집</button>
+        <button type="button" class="ico-btn ico-del"  data-act="del"  title="삭제">삭제</button>
       </div>`).join('');
   }
   document.getElementById('favGrid').addEventListener('click', (e) => {
@@ -403,6 +391,21 @@
     chip.textContent = c;
     chip.addEventListener('click', () => (m1kw.value = c));
     document.getElementById('m1-chips').appendChild(chip);
+  });
+
+  // ── 검색 anchor (출발지 중심 / 도착지 중심) ─────────────
+  // findPoiRoute 가 받아온 경로 corridor POI 들을 어느 쪽으로 더 가까운 순으로 정렬할지.
+  let m1Anchor = 'start';
+  const m1AnchorEl = document.getElementById('m1-anchor');
+  m1AnchorEl.addEventListener('click', (e) => {
+    const opt = e.target.closest('.ax-opt');
+    if (!opt) return;
+    m1Anchor = opt.dataset.anchor === 'dest' ? 'dest' : 'start';
+    m1AnchorEl.querySelectorAll('.ax-opt').forEach((b) => {
+      const on = b.dataset.anchor === m1Anchor;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
   });
 
   // ── 메뉴 1 ─────────────────────────────────────────────
@@ -455,7 +458,7 @@
     // 어떤 보조 동작(기록 저장 등)도 클릭 핸들러를 죽이면 안 됨 — 모두 try 안에서
     try {
       // 검색 기록 저장 (시간 제외) — 실패해도 핵심 흐름은 계속
-      try { Store.histAdd({ kind: 'menu1', start, dest, keyword, mode: m1Picker.getMode() }); } catch {}
+      try { Store.histAdd({ kind: 'menu1', start, dest, keyword, mode: m1Picker.getMode(), anchor: m1Anchor }); refreshHistBadge(); } catch {}
     if (m1MapEl.parentElement !== m1MapHome) m1MapHome.appendChild(m1MapEl);
     if (m1NavEl.parentElement !== m1NavHome) m1NavHome.appendChild(m1NavEl);
     m1MapEl.hidden = true;
@@ -483,6 +486,7 @@
       btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
       const { results, best, baseline } = await Api.minWaypoint({
         start, dest, keyword, time, mode, maxCandidates: 5,
+        anchor: m1Anchor,
       });
       if (!results.length) {
         m1ResultEl.innerHTML = '<div class="hint">근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.</div>';
@@ -612,7 +616,7 @@
     btn.innerHTML = `<span class="spinner"></span>${factorial(waypoints.length)}가지 순서 비교 중…`;
     try {
       // 검색 기록 저장 — 실패해도 핵심 흐름은 계속
-      try { Store.histAdd({ kind: 'menu2', start, dest, waypoints, mode: m2Picker.getMode() }); } catch {}
+      try { Store.histAdd({ kind: 'menu2', start, dest, waypoints, mode: m2Picker.getMode() }); refreshHistBadge(); } catch {}
     if (m2MapEl.parentElement !== m2MapHome) m2MapHome.appendChild(m2MapEl);
     if (m2NavEl.parentElement !== m2NavHome) m2NavHome.appendChild(m2NavEl);
     m2MapEl.hidden = true;
@@ -666,14 +670,22 @@
 
   function openHistPanel() {
     renderHistory();
-    histPanel.hidden = false;
-    histBackdrop.hidden = false;
+    histPanel.classList.add('is-open');
+    histBackdrop.classList.add('is-open');
     histPanel.setAttribute('aria-hidden', 'false');
   }
   function closeHistPanel() {
-    histPanel.hidden = true;
-    histBackdrop.hidden = true;
+    histPanel.classList.remove('is-open');
+    histBackdrop.classList.remove('is-open');
     histPanel.setAttribute('aria-hidden', 'true');
+  }
+  // 사이드 탭의 카운트 배지를 항상 최신으로 유지
+  function refreshHistBadge() {
+    const badge = document.getElementById('histTabBadge');
+    if (!badge) return;
+    const n = Store.histList().length;
+    badge.textContent = String(n);
+    badge.hidden = n === 0;
   }
   document.getElementById('histTab').addEventListener('click', openHistPanel);
   document.getElementById('histClose').addEventListener('click', closeHistPanel);
@@ -683,6 +695,7 @@
     if (!confirm('모든 검색 기록을 삭제할까요?')) return;
     Store.histClear();
     renderHistory();
+    refreshHistBadge();
     toast('기록 삭제됨');
   });
 
@@ -695,39 +708,77 @@
     return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
   function renderHistory() {
-    const entries = Store.histList();
-    histCountEl.textContent = entries.length;
-    histEmptyEl.style.display = entries.length === 0 ? 'block' : 'none';
-    histListEl.style.display = entries.length === 0 ? 'none' : 'block';
-    histListEl.innerHTML = entries.map((e) => {
-      let summary;
-      if (e.kind === 'menu1') {
-        summary = `${escapeHtml(e.start.name)} → ${escapeHtml(e.dest.name)}`;
-        if (e.keyword) summary += ` <span style="color:var(--muted)">· "${escapeHtml(e.keyword)}"</span>`;
-      } else {
-        const wps = e.waypoints.map((w) => escapeHtml(w.name)).join(' → ');
-        summary = `${escapeHtml(e.start.name)} → ${wps} → ${escapeHtml(e.dest.name)}`;
+    try {
+      const entries = Store.histList();
+      histCountEl.textContent = entries.length;
+      histEmptyEl.style.display = entries.length === 0 ? 'block' : 'none';
+      histListEl.style.display = entries.length === 0 ? 'none' : 'block';
+
+      // 동일 (kind, 출발좌표4자리, 도착좌표4자리) 끼리 묶음.
+      // 입력 순서 = 최신순(unshift) 이라 첫 등장 순서가 곧 그룹 최신순.
+      const coord = (p) => `${Number(p?.lon).toFixed(4)},${Number(p?.lat).toFixed(4)}`;
+      const groups = new Map();
+      for (const e of entries) {
+        if (!e?.start || !e?.dest) continue;
+        const k = `${e.kind}|${coord(e.start)}|${coord(e.dest)}`;
+        if (!groups.has(k)) groups.set(k, { start: e.start, dest: e.dest, items: [] });
+        groups.get(k).items.push(e);
       }
-      const kindLabel = e.kind === 'menu1' ? '📍 경유지 시간 비교' : '🔀 멀티 경유지 최적화';
-      return `<div class="hist-item" data-id="${e.id}">
-        <div class="h-kind">${kindLabel}</div>
-        <div class="h-summary">${summary}</div>
-        <div class="h-ts">${tsLabel(e.ts)}</div>
-        <div class="h-actions">
-          <button class="h-apply" data-act="apply">다시 검색</button>
-          <button class="h-del" data-act="del" aria-label="삭제">✕</button>
-        </div>
-      </div>`;
-    }).join('');
+
+      histListEl.innerHTML = Array.from(groups.values()).map((g) => {
+        const startName = escapeHtml(g.start.name || '출발');
+        const destName = escapeHtml(g.dest.name || '도착');
+        const subs = g.items.map((e) => {
+          let detail = '';
+          let emptyClass = '';
+          if (e.kind === 'menu1') {
+            if (e.keyword) {
+              detail = escapeHtml(e.keyword);
+            } else {
+              detail = '직접 경로';
+              emptyClass = ' empty';
+            }
+          } else {
+            const wps = (e.waypoints || []).map((w) => escapeHtml(w?.name || '경유')).join(' → ');
+            detail = wps || '경유 정보 없음';
+            if (!wps) emptyClass = ' empty';
+          }
+          return `<div class="hist-sub" data-id="${e.id}">
+            <span class="hs-time">${tsLabel(e.ts)}</span>
+            <span class="hs-detail${emptyClass}">${detail}</span>
+            <button class="hs-del" data-act="del" aria-label="삭제">✕</button>
+          </div>`;
+        }).join('');
+        return `<div class="hist-group">
+          <div class="hg-head">
+            <span class="hg-route">${startName}<span class="hg-sep">→</span>${destName}</span>
+            <span class="hg-count">${g.items.length}</span>
+          </div>
+          ${subs}
+        </div>`;
+      }).join('');
+    } catch (err) {
+      histListEl.innerHTML = `<div class="hint">기록 표시 중 오류: ${escapeHtml(err.message)}</div>`;
+    }
   }
   histListEl.addEventListener('click', (ev) => {
-    const btn = ev.target.closest('[data-act]');
-    if (!btn) return;
-    const id = btn.closest('.hist-item')?.dataset.id;
+    // 삭제 버튼은 단독 처리 (탭 이벤트가 부모 .hist-sub 로도 전파되므로 stopPropagation)
+    const delBtn = ev.target.closest('.hs-del');
+    if (delBtn) {
+      ev.stopPropagation();
+      const id = delBtn.closest('.hist-sub')?.dataset.id;
+      if (!id) return;
+      Store.histRemove(id);
+      renderHistory();
+      refreshHistBadge();
+      return;
+    }
+    // 그 외 항목 어디든 탭 = 다시 검색 (위치 복원 + 시간 '지금' 초기화)
+    const sub = ev.target.closest('.hist-sub');
+    if (!sub) return;
+    const id = sub.dataset.id;
     const e = Store.histList().find((x) => x.id === id);
-    if (!e) return;
-    if (btn.dataset.act === 'del') { Store.histRemove(id); renderHistory(); return; }
-    if (btn.dataset.act === 'apply') applyHistory(e);
+    if (e) applyHistory(e);
   });
 
   function applyHistory(e) {
@@ -737,6 +788,13 @@
       PI.start.setValue(e.start);
       PI.dest.setValue(e.dest);
       m1kw.value = e.keyword || '';
+      // anchor 도 복원 (옛 엔트리엔 없으면 start 디폴트)
+      m1Anchor = e.anchor === 'dest' ? 'dest' : 'start';
+      m1AnchorEl.querySelectorAll('.ax-opt').forEach((b) => {
+        const on = b.dataset.anchor === m1Anchor;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
       // 기록을 가져올 때는 항상 "지금 출발" 로 초기화 — 과거 시각은 의미 없음
       m1Picker.reset();
     } else {
@@ -768,6 +826,7 @@
     }
     renderFavorites();
     refreshAllBars();
+    refreshHistBadge();
     showView('home');
     // 환영카드: 날짜/날씨/배경 (비동기, 실패해도 무관)
     WeatherView.load(

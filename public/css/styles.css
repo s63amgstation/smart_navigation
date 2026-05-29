@@ -75,11 +75,10 @@ html, body {
   text-align: left;
 }
 .menu-card:active { transform: scale(0.99); }
-.menu-emoji { font-size: 26px; }
-.menu-text { flex: 1; display: flex; flex-direction: column; }
-.menu-text strong { font-size: 16px; }
+.menu-text { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.menu-text strong { font-size: 16px; letter-spacing: -0.2px; }
 .menu-text span { font-size: 13px; color: var(--muted); }
-.chev { font-size: 22px; color: var(--muted); }
+.chev { font-size: 22px; color: var(--muted); font-weight: 300; }
 
 /* 입력 */
 .field { margin-bottom: 14px; }
@@ -100,7 +99,22 @@ html, body {
 .text-input:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
 select.text-input { appearance: none; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+/* 카테고리 칩 — 한 줄 가로 스크롤 (즐겨찾기 fav-bar 와 동일 패턴) */
+.chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 2px 16px 2px 0;
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+.chips::-webkit-scrollbar { display: none; }
+.chips .chip { flex: 0 0 auto; white-space: nowrap; }
 .quick-fill { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .quick-fill .chip { font-size: 13px; padding: 7px 12px; }
 .quick-fill .chip-mini { padding: 7px 10px; color: #b91c1c; }
@@ -345,44 +359,54 @@ select.text-input { appearance: none; }
 }
 
 /* ─── 검색 기록 사이드 패널 ──────────────────────────── */
+/* 기록 탭 — 화면 우측에 항상 보이도록 크고 또렷하게 */
 .hist-tab {
   position: fixed;
   right: 0;
-  top: 40%;
+  top: 38%;
   z-index: 30;
-  width: 40px;
-  padding: 12px 4px;
-  border: 1px solid var(--line);
-  border-right: none;
+  min-width: 46px;
+  padding: 16px 6px;
+  border: 0;
   border-radius: 14px 0 0 14px;
-  background: rgba(255, 255, 255, 0.95);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  box-shadow: -4px 6px 18px rgba(0, 0, 0, 0.12);
+  background: var(--primary);
+  color: #fff;
+  box-shadow: -6px 8px 22px rgba(31, 111, 235, 0.32);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
-  color: var(--text);
+  font-weight: 700;
 }
 .hist-tab[hidden] { display: none; }
-.hist-tab .hist-tab-ic { font-size: 16px; }
 .hist-tab .hist-tab-tx {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 3px;
   writing-mode: vertical-rl;
-  letter-spacing: 2px;
 }
+.hist-tab .hist-tab-badge {
+  background: #fff;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 800;
+  border-radius: 999px;
+  min-width: 18px;
+  padding: 1px 6px;
+  text-align: center;
+}
+.hist-tab .hist-tab-badge[hidden] { display: none; }
 
 .hist-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.42);
   z-index: 55;
-  animation: fade-in 0.18s ease;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
-@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.hist-backdrop.is-open { opacity: 1; pointer-events: auto; }
 
 .hist-panel {
   position: fixed;
@@ -396,18 +420,13 @@ select.text-input { appearance: none; }
   flex-direction: column;
   padding-top: env(safe-area-inset-top);
   transform: translateX(100%);
-  transition: transform 0.25s cubic-bezier(.2, .8, .2, 1);
-  /* display:flex 가 [hidden] { display:none } 을 덮어쓰므로 — 닫힌 상태에서도 패널이 계속 렌더된다.
-     iOS Safari 에서는 화면 밖으로 밀어낸 패널이 z-index:60 으로 떠 있어 터치를 가로채는 일이 있어
-     pointer-events 로 명시적으로 차단한다 (열렸을 때만 클릭 가능). */
   pointer-events: none;
+  transition: transform 0.25s cubic-bezier(.2, .8, .2, 1);
 }
-.hist-panel:not([hidden]) {
+.hist-panel.is-open {
   transform: translateX(0);
   pointer-events: auto;
 }
-/* 백드롭도 안전하게: [hidden] 일 때 절대 클릭을 받지 못하게 */
-.hist-backdrop[hidden] { display: none; pointer-events: none; }
 
 .hist-head {
   display: flex;
@@ -430,57 +449,91 @@ select.text-input { appearance: none; }
   overflow-y: auto;
   padding: 12px;
 }
-.hist-item {
-  background: #fafbfd;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
+/* 검색 기록 — 동일 (출발,도착) 쌍을 머지해 그룹으로 묶는다.
+   서브 항목 전체 영역이 "다시 검색" 탭이라 한 손가락으로 끝남.
+   메타 정보 (모드/anchor/경유 개수) 는 의도적으로 표시 안 함 — 미니멀. */
+.hist-group {
+  margin-bottom: 14px;
 }
-.hist-item .h-kind {
-  font-size: 11.5px;
+.hg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 4px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.hg-route {
+  flex: 1;
+  font-size: 14.5px;
   font-weight: 700;
-  color: var(--primary);
-  letter-spacing: -0.1px;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.hist-item .h-summary {
+.hg-route .hg-sep {
+  color: var(--muted);
+  font-weight: 500;
+  margin: 0 4px;
+}
+.hg-count {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hist-sub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.hist-sub:hover { background: rgba(31, 111, 235, 0.05); }
+.hist-sub:active { background: rgba(31, 111, 235, 0.10); }
+.hs-time {
+  flex: 0 0 auto;
+  min-width: 70px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hs-detail {
+  flex: 1;
   font-size: 13.5px;
   font-weight: 500;
-  margin: 4px 0 6px;
-  line-height: 1.5;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.hist-item .h-ts { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
-.hist-item .h-actions { display: flex; gap: 6px; }
-.hist-item .h-apply {
-  flex: 1;
-  background: var(--primary);
-  color: #fff;
-  border: 1px solid var(--primary);
-  border-radius: 10px;
-  padding: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.hist-item .h-apply:active { background: var(--primary-d); }
-.hist-item .h-del {
+.hs-detail.empty { color: var(--muted); font-style: italic; }
+.hs-del {
+  flex: 0 0 auto;
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  width: 38px;
-  font-size: 14px;
+  border: 0;
   color: #b91c1c;
+  font-size: 14px;
+  padding: 4px 6px;
   cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.12s ease;
 }
+.hs-del:active { opacity: 1; }
 
 .hist-foot {
   padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
 }
 
-/* ─── 풀스크린 날씨 배경 (홈 전용) ────────────────────── */
-/* body.home-active 일 때만 보인다. 다른 화면에선 display:none. */
+/* ─── 풀스크린 배경 (홈 전용) — 화려한 파스텔 블롭이 빠르게 흐름 ───── */
+/* saturation 한 단계 더 올리고 alpha 65% 까지 끌어올려 색이 또렷하게 보이게.
+   사이클 40s → 14s 로 단축, 블롭이 6장으로 늘어 mixing 도 더 활발. */
 .weather-bg {
   position: fixed;
   inset: 0;
@@ -488,18 +541,37 @@ select.text-input { appearance: none; }
   overflow: hidden;
   pointer-events: none;
   display: none;
+  background:
+    radial-gradient(ellipse 55% 42% at 12% 18%, #ff8fc5 0%, transparent 58%),   /* hot pink */
+    radial-gradient(ellipse 45% 52% at 88% 60%, #8aabff 0%, transparent 58%),   /* azure */
+    radial-gradient(ellipse 60% 45% at 50% 105%, #ffb380 0%, transparent 58%),  /* peach */
+    radial-gradient(ellipse 45% 55% at 92% 8%, #c082ff 0%, transparent 58%),    /* violet */
+    radial-gradient(ellipse 50% 60% at 8% 85%, #6de2d4 0%, transparent 58%),    /* aqua */
+    radial-gradient(ellipse 40% 45% at 65% 35%, #ffd870 0%, transparent 55%),   /* sunshine */
+    linear-gradient(135deg, #f7eeff 0%, #eef2ff 100%);
+  background-size:
+    220% 220%, 220% 220%, 220% 220%, 220% 220%, 220% 220%, 220% 220%, 100% 100%;
+  animation: bg-shift 14s ease-in-out infinite;
 }
 body.home-active .weather-bg { display: block; }
+@keyframes bg-shift {
+  0%   { background-position: 0% 0%,    100% 100%, 50% 100%, 100% 0%,   0% 100%, 50% 0%,   0 0; }
+  20%  { background-position: 60% 20%,  40% 70%,   20% 60%,  50% 40%,   40% 50%, 80% 30%,  0 0; }
+  40%  { background-position: 100% 100%, 0% 0%,    100% 30%, 20% 80%,   80% 20%, 30% 70%,  0 0; }
+  60%  { background-position: 30% 80%,  70% 20%,   80% 70%,  90% 60%,   20% 30%, 60% 100%, 0 0; }
+  80%  { background-position: 80% 40%,  10% 80%,   40% 0%,   30% 30%,   60% 80%, 0% 50%,   0 0; }
+  100% { background-position: 0% 0%,    100% 100%, 50% 100%, 100% 0%,   0% 100%, 50% 0%,   0 0; }
+}
 
-/* 홈에서는 헤더/메인 배경을 투명하게 만들어 배경이 보이게 한다 */
+/* 홈에서는 헤더/메인 배경을 투명하게 만들어 배경이 보이게 한다 (light pastel) */
 body.home-active { background: transparent; }
 body.home-active .appbar {
   background: transparent;
   border-bottom: 0;
-  color: #fff;
+  color: var(--text);
 }
 body.home-active .appbar h1 { visibility: hidden; }
-body.home-active .icon-btn { color: #fff; }
+body.home-active .icon-btn { color: var(--text); }
 
 /* 홈 화면 자체: #app 의 padding/max-width 를 깨고 전체를 차지 */
 .view.home-screen {
@@ -508,47 +580,47 @@ body.home-active .icon-btn { color: #fff; }
   position: relative;
   min-height: calc(100vh - 52px - env(safe-area-inset-top));
   overflow: hidden;
-  color: #fff;
+  color: var(--text);
   flex-direction: column;
 }
 .view.home-screen.active { display: flex; }
 
 .home-screen .home-top {
-  padding: 22px 24px 0;
+  padding: 16px 24px 0;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
 }
 .home-screen .home-top .welcome-info {
-  font-size: 14px;
+  font-size: 13.5px;
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 6px;
   align-items: center;
-  opacity: 0.96;
-  margin-bottom: 12px;
+  color: #4a4a6a;
+  margin-bottom: 8px;
   letter-spacing: -0.1px;
 }
-.home-screen .home-top .w-dot { opacity: 0.55; }
-.home-screen .home-top .w-temp { font-weight: 700; font-size: 16px; }
+.home-screen .home-top .w-dot { color: #b5b5c8; }
 .home-screen .home-top .welcome-greeting {
-  margin: 0 0 6px;
-  font-size: 30px;
+  margin: 0 0 4px;
+  font-size: 26px;
   font-weight: 800;
   letter-spacing: -0.7px;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+  color: #1a1a2e;
 }
 .home-screen .home-top .welcome-sub {
   margin: 0;
-  font-size: 16px;
-  opacity: 0.92;
+  font-size: 14.5px;
+  color: #5a5a7a;
   font-weight: 500;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.2);
 }
 
+/* 메뉴 카드 영역 — margin-top: auto 로 하단 고정 대신 인사말 바로 아래 붙임.
+   메뉴 3장이 한 화면에 다 들어오도록. */
 .home-screen .home-menus {
-  margin-top: auto;
-  padding: 14px 14px calc(18px + env(safe-area-inset-bottom));
+  margin-top: 18px;
+  padding: 0 14px calc(18px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -556,103 +628,18 @@ body.home-active .icon-btn { color: #fff; }
   z-index: 1;
 }
 
-/* 메뉴 카드: 어떤 배경 위에서도 동일하게 보이도록 솔리드 흰색 */
+/* 메뉴 카드: 솔리드 흰색, light 배경 위에서도 깔끔하게 떠 보이도록 */
 .menu-card.glass {
   background: #ffffff;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(220, 220, 240, 0.8);
   color: var(--text);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 6px 20px rgba(80, 80, 120, 0.12);
   margin: 0;
 }
 .menu-card.glass .menu-text strong { color: var(--text); }
 .menu-card.glass .menu-text span { color: var(--muted); }
 .menu-card.glass .chev { color: var(--muted); }
-.weather-bg.sunny       { background: linear-gradient(135deg, #ffb866 0%, #ff8a3d 50%, #ff6b6b 100%); }
-.weather-bg.cloudy      { background: linear-gradient(135deg, #7593b5 0%, #50708e 100%); }
-.weather-bg.rain        { background: linear-gradient(135deg, #4a6a7d 0%, #2a3e4d 100%); }
-.weather-bg.snow        { background: linear-gradient(135deg, #bcd2e3 0%, #6d8ba6 100%); }
-.weather-bg.storm       { background: linear-gradient(135deg, #404a5c 0%, #1c2230 100%); }
-.weather-bg.clear-night { background: linear-gradient(135deg, #142048 0%, #2a1c4a 60%, #1a0f33 100%); }
-.weather-bg.cloudy-night{ background: linear-gradient(135deg, #28324a 0%, #1a1f30 100%); }
-.weather-bg.rain-night  { background: linear-gradient(135deg, #2a3548 0%, #131a26 100%); }
-
-/* 해 */
-.weather-bg .sun {
-  position: absolute;
-  top: 30px; right: -40px;
-  width: 220px; height: 220px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff5d6 0%, #ffd97a 45%, transparent 70%);
-  animation: sun-pulse 5s ease-in-out infinite;
-}
-@keyframes sun-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.95; }
-  50%      { transform: scale(1.08); opacity: 1; }
-}
-/* 달 */
-.weather-bg .moon {
-  position: absolute;
-  top: 60px; right: 36px;
-  width: 64px; height: 64px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff 0%, #e7e3d2 70%, #c8c2a8 100%);
-  box-shadow: 0 0 36px rgba(255, 250, 220, 0.55);
-}
-/* 별 */
-.weather-bg .star {
-  position: absolute;
-  width: 2px; height: 2px;
-  background: #fff;
-  border-radius: 50%;
-  animation: twinkle 2.4s ease-in-out infinite;
-  box-shadow: 0 0 3px rgba(255,255,255,0.8);
-}
-@keyframes twinkle {
-  0%, 100% { opacity: 0.25; transform: scale(0.8); }
-  50%      { opacity: 1; transform: scale(1.2); }
-}
-/* 빗방울 */
-.weather-bg .drop {
-  position: absolute;
-  top: -5vh;
-  width: 2px; height: 16px;
-  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(200,220,255,0.75));
-  border-radius: 1px;
-  animation: rain-fall linear infinite;
-}
-@keyframes rain-fall {
-  0%   { transform: translateY(0); opacity: 0; }
-  10%  { opacity: 1; }
-  100% { transform: translateY(110vh); opacity: 0.3; }
-}
-/* 눈송이 */
-.weather-bg .flake {
-  position: absolute;
-  top: -5vh;
-  font-size: 14px;
-  color: rgba(255,255,255,0.92);
-  animation: snow-fall linear infinite;
-  text-shadow: 0 0 6px rgba(255,255,255,0.4);
-}
-@keyframes snow-fall {
-  0%   { transform: translateY(0) translateX(0); opacity: 0; }
-  10%  { opacity: 1; }
-  100% { transform: translateY(110vh) translateX(30px); opacity: 0.5; }
-}
-/* 구름 */
-.weather-bg .cloud {
-  position: absolute;
-  left: -150px;
-  width: 130px; height: 36px;
-  background: rgba(255,255,255,0.72);
-  border-radius: 30px;
-  box-shadow: 36px 8px 0 -2px rgba(255,255,255,0.62), 64px -8px 0 -4px rgba(255,255,255,0.55);
-  animation: cloud-drift linear infinite;
-}
-@keyframes cloud-drift {
-  from { transform: translateX(0); }
-  to   { transform: translateX(calc(100vw + 200px)); }
-}
+/* 날씨별 특수 배경/파티클(해·달·별·비·눈·구름)은 그라데이션 단일화로 제거됨. */
 
 /* ─── 즐겨찾기 섹션 ───────────────────────────────────── */
 .fav-section {
@@ -753,63 +740,80 @@ body.home-active .icon-btn { color: #fff; }
   color: #b45309;
 }
 
-/* ─── 시간 픽커 (지금 / 나중에 출발) ─────────────────── */
-/* 기본 모드는 "지금" — 현재 시각을 1분마다 갱신해 표시.
-   "🕗 나중에 출발" 탭하면 .tp-row-future 가 보이고 dt-wrap 으로 datetime-local 픽업. */
+/* ─── 시간 픽커 (지금 / 나중에 출발) — 2-세그먼트 ───────── */
+/* 두 행이 항상 같이 보이고, 활성 행만 진하게 / 비활성은 흐릿하게.
+   탭하면 그 행이 활성화. 나중에 출발 탭 시 datetime picker 도 같이 팝. */
 .time-pick {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fff;
-  padding: 6px;
+  overflow: hidden;
 }
-.tp-row {
+.tp-seg {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 10px;
-}
-.tp-row-now {
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: opacity 0.18s ease, background 0.18s ease, filter 0.18s ease;
   font-variant-numeric: tabular-nums;
 }
-.tp-icon {
-  font-size: 18px;
-  flex: 0 0 auto;
+.tp-seg + .tp-seg { border-top: 1px solid var(--line); }
+.tp-seg:not(.active) {
+  opacity: 0.4;
+  filter: grayscale(60%);
 }
-.tp-text {
-  font-size: 15.5px;
-  font-weight: 600;
-  letter-spacing: -0.2px;
+.tp-seg.active {
+  background: rgba(31, 111, 235, 0.04);
+}
+.tp-seg-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: -0.1px;
+}
+.tp-seg.active .tp-seg-label { color: var(--primary); }
+.tp-seg-value {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
   color: var(--text);
 }
-.tp-now-clock {
+.tp-seg-now .tp-seg-value b {
   color: var(--primary);
   font-weight: 700;
 }
-.tp-row-future .tp-dt-wrap {
-  flex: 1;
-  /* 시간 픽커 안에서 추가 테두리 없이 가볍게 보이도록 */
+
+/* 나중에 출발 세그먼트 안의 datetime picker — 자체 테두리/패딩 제거 */
+.tp-seg-future .dt-wrap {
+  position: relative;
   border: 0;
   padding: 0;
+  margin: 0;
   background: transparent;
   box-shadow: none;
   min-height: 0;
-}
-.tp-toggle {
   display: flex;
   justify-content: flex-end;
-  padding: 2px 10px 6px;
-}
-.tp-toggle button {
-  background: transparent;
-  border: 0;
-  color: var(--primary);
-  font-size: 12.5px;
-  font-weight: 600;
-  padding: 4px 6px;
   cursor: pointer;
 }
-.tp-toggle button:active { opacity: 0.6; }
+.tp-seg-future .dt-display {
+  width: auto;
+  gap: 6px;
+}
+.tp-seg-future .dt-d-date,
+.tp-seg-future .dt-d-time {
+  font-size: 15px;
+}
+.tp-seg-future.active .dt-d-time { color: var(--primary); }
+/* 비활성 상태에서는 네이티브 input 이 탭을 가로채지 못하게 — 그러면 세그먼트 click 으로 활성화됨 */
+.tp-seg:not(.active) .dt-native { pointer-events: none; }
 
 /* ─── 날짜/시간 픽커 (재사용) ─────────────────────────── */
 /* 네이티브 input 은 투명하게 wrap 전체를 덮어 탭 영역만 차지하고,

@@ -31,15 +31,13 @@
         </div>
         <div class="home-menus">
           <button class="menu-card glass" data-go="menu1">
-            <div class="menu-emoji">📍</div>
             <div class="menu-text">
               <strong>경유지 시간 비교</strong>
-              <span>가는 길에 들를 곳 / 직접 경로만</span>
+              <span>회사 갈 때 가장 경유시간 짧은 스타벅스"</span>
             </div>
             <span class="chev">›</span>
           </button>
           <button class="menu-card glass" data-go="menu2">
-            <div class="menu-emoji">🔀</div>
             <div class="menu-text">
               <strong>멀티 경유지 최적화</strong>
               <span>여러 곳을 들를 때 가장 빠른 순서</span>
@@ -47,7 +45,6 @@
             <span class="chev">›</span>
           </button>
           <button class="menu-card glass" data-go="favs">
-            <div class="menu-emoji">⭐</div>
             <div class="menu-text">
               <strong>즐겨찾기 등록</strong>
               <span>집·회사 등 자주 가는 곳</span>
@@ -101,30 +98,31 @@
           <label>찾을 장소 <small>(비우면 직접 경로만 조회)</small></label>
           <input id="m1-keyword" class="text-input" placeholder="예: 스타벅스, 주유소 — 비워도 됩니다" />
           <div class="chips" id="m1-chips"></div>
+          <!-- 검색 anchor: findPoiRoute 가 받아온 경로 corridor POI 들을 어느 쪽으로 기울여 정렬할지 -->
+          <div class="anchor-toggle" id="m1-anchor" role="tablist" aria-label="후보 검색 중심">
+            <button type="button" class="ax-opt active" data-anchor="start" role="tab" aria-selected="true">출발지 중심</button>
+            <button type="button" class="ax-opt" data-anchor="dest" role="tab" aria-selected="false">도착지 중심</button>
+          </div>
         </div>
         <div class="field">
           <label>시간</label>
           <div class="time-pick" data-pick="m1">
-            <!-- 모드: 지금 출발 (기본) — 현재 시각을 1분마다 갱신 -->
-            <div class="tp-row tp-row-now">
-              <span class="tp-icon">⏰</span>
-              <span class="tp-text">지금 · <b class="tp-now-clock">—</b></span>
+            <div class="tp-seg tp-seg-now active" data-mode="now">
+              <span class="tp-seg-label">지금 출발</span>
+              <span class="tp-seg-value"><b class="tp-now-clock">—</b></span>
             </div>
-            <!-- 모드: 나중에 출발 — 네이티브 datetime-local 오버레이로 탭 시 picker -->
-            <div class="tp-row tp-row-future" hidden>
-              <span class="tp-icon">📅</span>
-              <div class="dt-wrap tp-dt-wrap">
-                <div class="dt-display">
-                  <span class="dt-d-date">—</span>
-                  <span class="dt-d-dot">·</span>
-                  <span class="dt-d-time">—</span>
+            <div class="tp-seg tp-seg-future" data-mode="future">
+              <span class="tp-seg-label">나중에 출발</span>
+              <div class="tp-seg-value">
+                <div class="dt-wrap tp-dt-wrap">
+                  <div class="dt-display">
+                    <span class="dt-d-date">—</span>
+                    <span class="dt-d-dot">·</span>
+                    <span class="dt-d-time">—</span>
+                  </div>
+                  <input id="m1-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
                 </div>
-                <input id="m1-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
               </div>
-            </div>
-            <div class="tp-toggle">
-              <button type="button" class="tp-later">🕗 나중에 출발</button>
-              <button type="button" class="tp-back-now" hidden>← 지금으로</button>
             </div>
           </div>
         </div>
@@ -152,24 +150,22 @@
         <div class="field">
           <label>시간</label>
           <div class="time-pick" data-pick="m2">
-            <div class="tp-row tp-row-now">
-              <span class="tp-icon">⏰</span>
-              <span class="tp-text">지금 · <b class="tp-now-clock">—</b></span>
+            <div class="tp-seg tp-seg-now active" data-mode="now">
+              <span class="tp-seg-label">지금 출발</span>
+              <span class="tp-seg-value"><b class="tp-now-clock">—</b></span>
             </div>
-            <div class="tp-row tp-row-future" hidden>
-              <span class="tp-icon">📅</span>
-              <div class="dt-wrap tp-dt-wrap">
-                <div class="dt-display">
-                  <span class="dt-d-date">—</span>
-                  <span class="dt-d-dot">·</span>
-                  <span class="dt-d-time">—</span>
+            <div class="tp-seg tp-seg-future" data-mode="future">
+              <span class="tp-seg-label">나중에 출발</span>
+              <div class="tp-seg-value">
+                <div class="dt-wrap tp-dt-wrap">
+                  <div class="dt-display">
+                    <span class="dt-d-date">—</span>
+                    <span class="dt-d-dot">·</span>
+                    <span class="dt-d-time">—</span>
+                  </div>
+                  <input id="m2-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
                 </div>
-                <input id="m2-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
               </div>
-            </div>
-            <div class="tp-toggle">
-              <button type="button" class="tp-later">🕗 나중에 출발</button>
-              <button type="button" class="tp-back-now" hidden>← 지금으로</button>
             </div>
           </div>
         </div>
@@ -182,11 +178,11 @@
 
     <!-- 검색 기록 (우측 슬라이드 패널) -->
     <button id="histTab" class="hist-tab" hidden aria-label="검색 기록 열기">
-      <span class="hist-tab-ic">⌛</span>
       <span class="hist-tab-tx">기록</span>
+      <span class="hist-tab-badge" id="histTabBadge" hidden>0</span>
     </button>
-    <div id="histBackdrop" class="hist-backdrop" hidden></div>
-    <aside id="histPanel" class="hist-panel" hidden aria-hidden="true">
+    <div id="histBackdrop" class="hist-backdrop"></div>
+    <aside id="histPanel" class="hist-panel" aria-hidden="true">
       <div class="hist-head">
         <h3>최근 검색 <span class="muted" id="histCount">0</span></h3>
         <button id="histClose" class="icon-btn" aria-label="닫기">✕</button>

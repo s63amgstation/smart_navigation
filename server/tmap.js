@@ -41,6 +41,76 @@ function safeBody(text) {
   return text.slice(0, 300);
 }
 
+// ── 역지오코딩 (좌표 → 시·구 행정구역) ──────────────────────────
+// 메인화면 "현재 위치" 자리에 "서울특별시 강서구" 형태로 보이도록.
+// 실패하면 null 반환 — 프론트는 표기를 그냥 숨김.
+export async function reverseGeocode({ lat, lon }) {
+  const params = new URLSearchParams({
+    version: '1',
+    lat: String(lat),
+    lon: String(lon),
+    coordType: 'WGS84GEO',
+    addressType: 'A10', // 행정구역 우선
+  });
+  const res = await fetch(`${BASE}/geo/reversegeocoding?${params.toString()}`, {
+    headers: { appKey: appKey(), Accept: 'application/json' },
+  });
+  const text = await res.text();
+  if (!res.ok) return null;
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { return null; }
+  const info = data?.addressInfo;
+  if (!info) return null;
+  // city_do = "서울특별시", gu_gun = "강서구". 둘 다 있을 때만 보여줌.
+  const city = info.city_do || '';
+  const gu = info.gu_gun || '';
+  if (!city || !gu) return null;
+  return `${city} ${gu}`;
+}
+
+// ── 경로 반경 검색 (findPoiRoute) ────────────────────────────────
+// 출발→도착 경로 corridor 따라 POI 검색.
+// 점 반경(searchPois with center+radius)을 두 번 호출하던 것보다 더 자연스러운
+// "가는 길 위 후보" 들을 한 번에 받음.
+// 응답 shape 는 POI 통합검색과 동일 가정 (searchPoiInfo.pois.poi).
+export async function findPoiRoute({ keyword, start, dest, count = 20, page = 1 }) {
+  const params = new URLSearchParams({
+    version: '1',
+    searchKeyword: keyword,
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+    startX: String(start.lon),
+    startY: String(start.lat),
+    endX: String(dest.lon),
+    endY: String(dest.lat),
+    count: String(count),
+    page: String(page),
+  });
+  const res = await fetch(`${BASE}/poi/findPoiRoute?${params.toString()}`, {
+    headers: { appKey: appKey(), Accept: 'application/json' },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`경로 POI 검색 실패 (${res.status}): ${safeBody(text)}`);
+  }
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    return [];
+  }
+  const pois = data?.searchPoiInfo?.pois?.poi ?? [];
+  return pois.map((p) => {
+    const lon = parseFloat(p.frontLon || p.noorLon);
+    const lat = parseFloat(p.frontLat || p.noorLat);
+    const addr = [p.upperAddrName, p.middleAddrName, p.lowerAddrName, p.detailAddrName]
+      .filter(Boolean)
+      .join(' ');
+    const road = p.newAddressList?.newAddress?.[0]?.fullAddressRoad;
+    return { name: p.name, lon, lat, address: road || addr };
+  });
+}
+
 // ── POI 통합검색 (자동완성/장소검색) ─────────────────────────────
 // keyword 로 장소를 찾는다. center(lon/lat)+radius 를 주면 그 주변을 우선한다.
 export async function searchPois({ keyword, centerLon, centerLat, radius = 0, count = 12 }) {

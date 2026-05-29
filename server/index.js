@@ -3,7 +3,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { searchPois, predictRoute, fmtMinutes } from './tmap.js';
+import { searchPois, findPoiRoute, predictRoute, reverseGeocode, fmtMinutes } from './tmap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -28,6 +28,18 @@ const wrap = (fn) => (req, res) =>
 app.get('/api/config', (_req, res) => {
   res.json({ hasKey, mapKey: process.env.TMAP_APP_KEY || '' });
 });
+
+// 좌표 → "시 + 구" 역지오코딩 (메인화면 위치 표기용)
+app.get(
+  '/api/reverse-geocode',
+  wrap(async (req, res) => {
+    const lat = parseFloat(req.query.lat);
+    const lon = parseFloat(req.query.lon);
+    if (!isFinite(lat) || !isFinite(lon)) return res.json({ region: null });
+    const region = await reverseGeocode({ lat, lon });
+    res.json({ region });
+  }),
+);
 
 // 장소 자동완성/검색
 app.get(
@@ -71,33 +83,53 @@ function haversine(a, b) {
 app.post(
   '/api/min-waypoint',
   wrap(async (req, res) => {
-    const { start, dest, keyword, time, mode = 'now', maxCandidates = 5 } = req.body;
+    const {
+      start, dest, keyword, time, mode = 'now', maxCandidates = 5,
+      anchor = 'start',
+    } = req.body;
     if (!start || !dest || !keyword) {
       return res.status(400).json({ error: 'start, dest, keyword 가 필요합니다.' });
     }
 
-    // 1) 양쪽에서 넓게 검색 (TMAP radius 는 km, 1~33, 정수)
-    const directM = haversine(start, dest);
-    const radius = Math.min(33, Math.max(5, Math.round(directM / 2000 + 3))); // 경로 절반 + 여유
-    const [nearStart, nearDest] = await Promise.all([
-      searchPois({ keyword, centerLon: start.lon, centerLat: start.lat, radius, count: 20 }),
-      searchPois({ keyword, centerLon: dest.lon, centerLat: dest.lat, radius, count: 20 }),
-    ]);
+    const anchorPole = anchor === 'dest' ? dest : start;
 
-    // 2) 중복 제거 + 직선 우회거리 계산
+    // 1) 경로 corridor 검색 — findPoiRoute 1회 호출로 "가는 길 위 후보" 받기.
+    //    실패하거나 0건이면 양쪽 점 반경 검색으로 폴백 (이전 동작 보존).
+    const directM = haversine(start, dest);
+    let rawPois = [];
+    let searchSource = 'route';
+    try {
+      rawPois = await findPoiRoute({ keyword, start, dest, count: 20 });
+    } catch (e) {
+      console.warn('findPoiRoute 실패, 점 반경 검색으로 폴백:', e.message);
+      rawPois = [];
+    }
+    if (!rawPois.length) {
+      searchSource = 'fallback';
+      const radius = Math.min(33, Math.max(5, Math.round(directM / 2000 + 3))); // 경로 절반 + 여유
+      const [nearStart, nearDest] = await Promise.all([
+        searchPois({ keyword, centerLon: start.lon, centerLat: start.lat, radius, count: 20 }),
+        searchPois({ keyword, centerLon: dest.lon, centerLat: dest.lat, radius, count: 20 }),
+      ]);
+      rawPois = [...nearStart, ...nearDest];
+    }
+
+    // 2) 중복 제거 + 직선 우회거리 + anchor 폴 거리 계산
     const seen = new Set();
     const pool = [];
-    for (const p of [...nearStart, ...nearDest]) {
+    for (const p of rawPois) {
       const k = `${p.name}|${p.lon.toFixed(4)},${p.lat.toFixed(4)}`;
       if (seen.has(k)) continue;
       seen.add(k);
       const detour = haversine(start, p) + haversine(p, dest) - directM;
-      pool.push({ ...p, detourM: Math.round(detour) });
+      const anchorM = haversine(anchorPole, p);
+      pool.push({ ...p, detourM: Math.round(detour), anchorM: Math.round(anchorM) });
     }
-    if (!pool.length) return res.json({ results: [], best: null, poolSize: 0 });
+    if (!pool.length) return res.json({ results: [], best: null, poolSize: 0, searchSource, anchor });
 
-    // 3) 직선 우회거리 작은 순 상위 N개만 진짜 경로 조회 (mode 에 따라 routes vs prediction)
-    pool.sort((a, b) => a.detourM - b.detourM);
+    // 3) anchor 폴(출발지/도착지) 가까운 순 상위 N개만 진짜 경로 조회
+    //    "출발지 중심" 이면 출발 쪽 후보가 앞으로, "도착지 중심" 이면 도착 쪽 후보가 앞으로.
+    pool.sort((a, b) => a.anchorM - b.anchorM);
     const candidates = pool.slice(0, maxCandidates);
 
     // 베이스라인(경유 없음) 1회 — "이만큼 더 걸린다" 비교용
@@ -129,7 +161,8 @@ app.post(
     const best = results.find((r) => r.totalTime != null) || null;
     res.json({
       poolSize: pool.length,
-      searchRadiusKm: radius,
+      searchSource, // 'route' = findPoiRoute / 'fallback' = 점 반경 검색
+      anchor,       // 'start' | 'dest'
       baseline,
       // extraSeconds 는 음수(이 경유가 직접 경로보다 빠름)일 수도 있어 raw 로만 내려준다.
       // 표시 문구/색은 프론트에서 부호별로 결정한다.
