@@ -135,37 +135,90 @@
     const timeFull = `${ampm} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
     return [dateFull, timeFull];
   }
-  function bindDtWrap(wrap) {
-    const inp = wrap.querySelector('.dt-native');
-    const dateEl = wrap.querySelector('.dt-d-date');
-    const timeEl = wrap.querySelector('.dt-d-time');
-    function sync() {
-      const [d, t] = fmtDtPretty(inp.value);
-      dateEl.textContent = d;
-      timeEl.textContent = t;
+  // ── 시간 픽커 (지금 / 나중에 출발) ─────────────────────
+  // 두 모드를 토글:
+  //   'now'    : 시계만 표시, 1분마다 갱신. 서버엔 time 미전송, mode='now'.
+  //   'future' : datetime-local 노출, 10분 단위 라운딩 + 과거 차단. mode='future'.
+  function bindTimePicker(wrap) {
+    const nowRow = wrap.querySelector('.tp-row-now');
+    const futureRow = wrap.querySelector('.tp-row-future');
+    const clockEl = wrap.querySelector('.tp-now-clock');
+    const dtInput = wrap.querySelector('.dt-native');
+    const dtDateEl = wrap.querySelector('.dt-d-date');
+    const dtTimeEl = wrap.querySelector('.dt-d-time');
+    const laterBtn = wrap.querySelector('.tp-later');
+    const backBtn = wrap.querySelector('.tp-back-now');
+
+    let mode = 'now';
+    let clockTimer = null;
+
+    function fmtClock(d = new Date()) {
+      const h = d.getHours();
+      const ampm = h < 12 ? '오전' : '오후';
+      const h12 = h % 12 || 12;
+      return `${ampm} ${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
-    function refreshMin() { inp.min = localDtCeil(); }
-    function ensureFuture() {
-      refreshMin();
-      if (!inp.value) { inp.value = inp.min; return; }
-      // 10분 단위로 라운딩하고 min 보다 작으면 min 으로 끌어올린다
-      let v = localDtString(new Date(inp.value));
-      if (v < inp.min) {
-        toast('과거 시각은 선택할 수 없어요');
-        v = inp.min;
+    function tick() { if (mode === 'now') clockEl.textContent = fmtClock(); }
+    function syncFutureDisplay() {
+      const [d, t] = fmtDtPretty(dtInput.value);
+      dtDateEl.textContent = d;
+      dtTimeEl.textContent = t;
+    }
+    function ensureFutureValid() {
+      const min = localDtCeil();
+      dtInput.min = min;
+      if (!dtInput.value) { dtInput.value = min; return; }
+      let v = localDtString(new Date(dtInput.value));
+      if (v < min) { toast('과거 시각은 선택할 수 없어요'); v = min; }
+      if (v !== dtInput.value) dtInput.value = v;
+    }
+    function setMode(m) {
+      mode = m;
+      if (m === 'now') {
+        nowRow.hidden = false;
+        futureRow.hidden = true;
+        laterBtn.hidden = false;
+        backBtn.hidden = true;
+        tick();
+        clearInterval(clockTimer);
+        clockTimer = setInterval(tick, 60_000);
+      } else {
+        nowRow.hidden = true;
+        futureRow.hidden = false;
+        laterBtn.hidden = true;
+        backBtn.hidden = false;
+        clearInterval(clockTimer);
+        ensureFutureValid();
+        syncFutureDisplay();
       }
-      if (v !== inp.value) inp.value = v;
     }
-    inp.addEventListener('change', () => { ensureFuture(); sync(); });
-    inp.addEventListener('focus', refreshMin);
-    refreshMin();
-    if (!inp.value) inp.value = inp.min;
-    sync();
+
+    laterBtn.addEventListener('click', () => {
+      setMode('future');
+      // iOS Safari 에서 토글 직후 네이티브 datetime picker 를 즉시 띄움
+      setTimeout(() => {
+        try { dtInput.showPicker?.(); } catch {}
+        dtInput.focus?.();
+      }, 50);
+    });
+    backBtn.addEventListener('click', () => setMode('now'));
+    dtInput.addEventListener('change', () => { ensureFutureValid(); syncFutureDisplay(); });
+    dtInput.addEventListener('focus', () => { dtInput.min = localDtCeil(); });
+
+    setMode('now');
+
+    return {
+      getMode: () => mode,
+      // mode='now' 면 서버가 무시 (현재시각으로 routes 호출). future 면 yyyy-MM-ddTHH:mm 그대로.
+      getTime: () => (mode === 'future' ? dtInput.value : null),
+      // 검색 기록에서 가져온 entry 적용 시 사용 — 무조건 '지금'으로 초기화
+      reset: () => setMode('now'),
+    };
   }
-  // 기본값을 "다음 10분 슬롯"으로 채우고 wrap 바인딩 (과거 시각 차단)
-  document.getElementById('m1-time').value = localDtCeil();
-  document.getElementById('m2-time').value = localDtCeil();
-  document.querySelectorAll('.dt-wrap').forEach(bindDtWrap);
+
+  // 메뉴1·메뉴2 각각 픽커 인스턴스 1개씩
+  const m1Picker = bindTimePicker(document.querySelector('.time-pick[data-pick="m1"]'));
+  const m2Picker = bindTimePicker(document.querySelector('.time-pick[data-pick="m2"]'));
 
   // ── 현재 위치 ───────────────────────────────────────────
   function useCurrentLocation(placeInput) {
@@ -402,19 +455,19 @@
     // 어떤 보조 동작(기록 저장 등)도 클릭 핸들러를 죽이면 안 됨 — 모두 try 안에서
     try {
       // 검색 기록 저장 (시간 제외) — 실패해도 핵심 흐름은 계속
-      try { Store.histAdd({ kind: 'menu1', start, dest, keyword, predictionType: document.getElementById('m1-ptype').value }); } catch {}
+      try { Store.histAdd({ kind: 'menu1', start, dest, keyword, mode: m1Picker.getMode() }); } catch {}
     if (m1MapEl.parentElement !== m1MapHome) m1MapHome.appendChild(m1MapEl);
     if (m1NavEl.parentElement !== m1NavHome) m1NavHome.appendChild(m1NavEl);
     m1MapEl.hidden = true;
     m1NavEl.hidden = true;
     m1ResultEl.innerHTML = '';
-    const time = document.getElementById('m1-time').value;
-    const predictionType = document.getElementById('m1-ptype').value;
+    const mode = m1Picker.getMode();
+    const time = m1Picker.getTime(); // 'now' 모드면 null
 
       // 키워드 비어있으면 → 직접 경로만 1회 조회
       if (!keyword) {
         btn.innerHTML = '<span class="spinner"></span>직접 경로 계산 중…';
-        const r = await Api.route({ start, dest, waypoints: [], time, predictionType });
+        const r = await Api.route({ start, dest, waypoints: [], time, mode });
         m1State = { results: [{ poi: null, totalTime: r.totalTime, totalDistance: r.totalDistance, path: r.path }], start, dest, selectedIdx: -1 };
         m1ResultEl.innerHTML = `
           <div class="res-card clickable best" data-idx="0">
@@ -429,7 +482,7 @@
       // 경유지 후보 비교
       btn.innerHTML = '<span class="spinner"></span>경유지별 시간 계산 중…';
       const { results, best, baseline } = await Api.minWaypoint({
-        start, dest, keyword, time, predictionType, maxCandidates: 5,
+        start, dest, keyword, time, mode, maxCandidates: 5,
       });
       if (!results.length) {
         m1ResultEl.innerHTML = '<div class="hint">근처에서 후보를 찾지 못했어요. 키워드를 바꿔보세요.</div>';
@@ -559,25 +612,23 @@
     btn.innerHTML = `<span class="spinner"></span>${factorial(waypoints.length)}가지 순서 비교 중…`;
     try {
       // 검색 기록 저장 — 실패해도 핵심 흐름은 계속
-      try { Store.histAdd({ kind: 'menu2', start, dest, waypoints, predictionType: document.getElementById('m2-ptype').value }); } catch {}
+      try { Store.histAdd({ kind: 'menu2', start, dest, waypoints, mode: m2Picker.getMode() }); } catch {}
     if (m2MapEl.parentElement !== m2MapHome) m2MapHome.appendChild(m2MapEl);
     if (m2NavEl.parentElement !== m2NavHome) m2NavHome.appendChild(m2NavEl);
     m2MapEl.hidden = true;
     m2NavEl.hidden = true;
     m2ResultEl.innerHTML = '';
-      const { results, best } = await Api.optimize({
+      const { results, best, combinations } = await Api.optimize({
         start, dest, waypoints,
-        time: document.getElementById('m2-time').value,
-        predictionType: document.getElementById('m2-ptype').value,
+        time: m2Picker.getTime(),
+        mode: m2Picker.getMode(),
       });
       if (!results?.length || !best) {
         m2ResultEl.innerHTML = '<div class="hint">경로를 계산하지 못했어요.</div>';
         return;
       }
       m2State = { results, start, dest, selectedIdx: -1 };
-      // 백엔드가 routeOptimization10 한 번으로 TMAP 최적 순서를 받아오므로 결과는 1개.
-      // (옛 N! brute-force 와 같은 응답 shape 를 유지해서 카드 렌더링 로직은 그대로.)
-      const header = `<div class="hint">TMAP 가 계산한 최적 방문 순서예요. 카드 탭하면 지도가 펼쳐집니다.</div>`;
+      const header = `<div class="hint">${combinations}가지 순서를 모두 계산 — 시간 짧은 순으로 정렬. 카드 탭하면 그 순서의 지도가 펼쳐집니다.</div>`;
       m2ResultEl.innerHTML = header + results.map((r, i) => {
         const seqParts = ['<b>출발</b>'];
         r.order.forEach((w, j) => seqParts.push(`<b>경유${j + 1}</b> <span style="color:#6b7280">(${escapeHtml(w.name)})</span>`));
@@ -585,12 +636,13 @@
         const seq = seqParts.join(' → ');
         if (r.error) {
           return `<div class="res-card" data-idx="${i}" data-err="1">
-            <div class="res-rank">최적 순서</div>
+            <div class="res-rank">${i + 1}위</div>
             <div class="res-name" style="font-size:13px;font-weight:500">${seq}</div>
             <div class="res-meta" style="color:#b91c1c">계산 실패: ${escapeHtml(r.error)}</div></div>`;
         }
-        return `<div class="res-card clickable best" data-idx="${i}">
-          <div class="res-rank">최적 순서<span class="badge">TMAP 추천</span><span class="tap-hint">탭하면 지도</span></div>
+        const isBest = best && r.totalTime === best.totalTime;
+        return `<div class="res-card clickable ${isBest ? 'best' : ''}" data-idx="${i}">
+          <div class="res-rank">${i + 1}위${isBest ? '<span class="badge">최단</span>' : ''}<span class="tap-hint">탭하면 지도</span></div>
           <div class="res-name" style="font-size:13px;font-weight:500;line-height:1.5">${seq}</div>
           <div class="res-time">${r.timeText} · ${km(r.totalDistance)}</div>
         </div>`;
@@ -678,14 +730,6 @@
     if (btn.dataset.act === 'apply') applyHistory(e);
   });
 
-  // dt-wrap 의 한글 표시를 강제로 다시 그리는 헬퍼
-  function refreshAllDtDisplays() {
-    document.querySelectorAll('.dt-wrap').forEach((w) => {
-      const inp = w.querySelector('.dt-native');
-      if (inp) inp.dispatchEvent(new Event('change'));
-    });
-  }
-
   function applyHistory(e) {
     closeHistPanel();
     if (e.kind === 'menu1') {
@@ -693,8 +737,8 @@
       PI.start.setValue(e.start);
       PI.dest.setValue(e.dest);
       m1kw.value = e.keyword || '';
-      document.getElementById('m1-ptype').value = e.predictionType || 'departure';
-      document.getElementById('m1-time').value = localDtCeil();
+      // 기록을 가져올 때는 항상 "지금 출발" 로 초기화 — 과거 시각은 의미 없음
+      m1Picker.reset();
     } else {
       showView('menu2');
       PI.m2start.setValue(e.start);
@@ -709,11 +753,9 @@
         const last = wpInputs[wpInputs.length - 1];
         last.pi.setValue(w);
       });
-      document.getElementById('m2-ptype').value = e.predictionType || 'departure';
-      document.getElementById('m2-time').value = localDtCeil();
+      m2Picker.reset();
     }
-    refreshAllDtDisplays();
-    toast('이전 검색을 가져왔어요 (시간은 현재로 초기화)');
+    toast('이전 검색을 가져왔어요 (시간은 지금으로 초기화)');
   }
 
   // ── 부팅 ────────────────────────────────────────────────

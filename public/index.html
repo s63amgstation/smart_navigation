@@ -102,23 +102,29 @@
           <input id="m1-keyword" class="text-input" placeholder="예: 스타벅스, 주유소 — 비워도 됩니다" />
           <div class="chips" id="m1-chips"></div>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>기준</label>
-            <select id="m1-ptype" class="text-input">
-              <option value="departure">출발 시각</option>
-              <option value="arrival">도착 시각</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>시간 <small>(10분 단위)</small></label>
-            <div class="dt-wrap">
-              <div class="dt-display">
-                <span class="dt-d-date">—</span>
-                <span class="dt-d-dot">·</span>
-                <span class="dt-d-time">—</span>
+        <div class="field">
+          <label>시간</label>
+          <div class="time-pick" data-pick="m1">
+            <!-- 모드: 지금 출발 (기본) — 현재 시각을 1분마다 갱신 -->
+            <div class="tp-row tp-row-now">
+              <span class="tp-icon">⏰</span>
+              <span class="tp-text">지금 · <b class="tp-now-clock">—</b></span>
+            </div>
+            <!-- 모드: 나중에 출발 — 네이티브 datetime-local 오버레이로 탭 시 picker -->
+            <div class="tp-row tp-row-future" hidden>
+              <span class="tp-icon">📅</span>
+              <div class="dt-wrap tp-dt-wrap">
+                <div class="dt-display">
+                  <span class="dt-d-date">—</span>
+                  <span class="dt-d-dot">·</span>
+                  <span class="dt-d-time">—</span>
+                </div>
+                <input id="m1-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
               </div>
-              <input id="m1-time" type="datetime-local" step="600" class="dt-native" aria-label="시간 선택" />
+            </div>
+            <div class="tp-toggle">
+              <button type="button" class="tp-later">🕗 나중에 출발</button>
+              <button type="button" class="tp-back-now" hidden>← 지금으로</button>
             </div>
           </div>
         </div>
@@ -143,23 +149,27 @@
           <label>도착지</label>
           <div class="place-input" data-role="m2dest"></div>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>기준</label>
-            <select id="m2-ptype" class="text-input">
-              <option value="departure">출발 시각</option>
-              <option value="arrival">도착 시각</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>시간 <small>(10분 단위)</small></label>
-            <div class="dt-wrap">
-              <div class="dt-display">
-                <span class="dt-d-date">—</span>
-                <span class="dt-d-dot">·</span>
-                <span class="dt-d-time">—</span>
+        <div class="field">
+          <label>시간</label>
+          <div class="time-pick" data-pick="m2">
+            <div class="tp-row tp-row-now">
+              <span class="tp-icon">⏰</span>
+              <span class="tp-text">지금 · <b class="tp-now-clock">—</b></span>
+            </div>
+            <div class="tp-row tp-row-future" hidden>
+              <span class="tp-icon">📅</span>
+              <div class="dt-wrap tp-dt-wrap">
+                <div class="dt-display">
+                  <span class="dt-d-date">—</span>
+                  <span class="dt-d-dot">·</span>
+                  <span class="dt-d-time">—</span>
+                </div>
+                <input id="m2-time" type="datetime-local" step="600" class="dt-native" aria-label="예약 시간" />
               </div>
-              <input id="m2-time" type="datetime-local" step="600" class="dt-native" aria-label="시간 선택" />
+            </div>
+            <div class="tp-toggle">
+              <button type="button" class="tp-later">🕗 나중에 출발</button>
+              <button type="button" class="tp-back-now" hidden>← 지금으로</button>
             </div>
           </div>
         </div>

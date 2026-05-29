@@ -3,7 +3,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { searchPois, predictRoute, optimizeRoute, fmtMinutes } from './tmap.js';
+import { searchPois, predictRoute, fmtMinutes } from './tmap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -62,7 +62,8 @@ function haversine(a, b) {
 }
 
 // ── 메뉴 1: 최소 경유지 찾기 ───────────────────────────────────────
-// body: { start, dest, keyword, time, predictionType, maxCandidates }
+// body: { start, dest, keyword, time, mode, maxCandidates }
+//   mode='now' 면 time 무시(/tmap/routes 호출), 'future' 면 time 사용(/tmap/routes/prediction).
 //
 // 전략: 출발지·도착지 양쪽에서 넓게 POI 를 수집하고(=도착지 옆/출발지 옆도 누락 없이 잡힘),
 // "직선 우회거리"(|S→P|+|P→D|-|S→D|)로 싸게 정렬한 뒤
@@ -70,7 +71,7 @@ function haversine(a, b) {
 app.post(
   '/api/min-waypoint',
   wrap(async (req, res) => {
-    const { start, dest, keyword, time, predictionType = 'departure', maxCandidates = 5 } = req.body;
+    const { start, dest, keyword, time, mode = 'now', maxCandidates = 5 } = req.body;
     if (!start || !dest || !keyword) {
       return res.status(400).json({ error: 'start, dest, keyword 가 필요합니다.' });
     }
@@ -95,14 +96,14 @@ app.post(
     }
     if (!pool.length) return res.json({ results: [], best: null, poolSize: 0 });
 
-    // 3) 직선 우회거리 작은 순 상위 N개만 진짜 예측
+    // 3) 직선 우회거리 작은 순 상위 N개만 진짜 경로 조회 (mode 에 따라 routes vs prediction)
     pool.sort((a, b) => a.detourM - b.detourM);
     const candidates = pool.slice(0, maxCandidates);
 
-    // 베이스라인(경유 없음) 1회 계산 — "이만큼 더 걸린다"를 보여주기 위함
+    // 베이스라인(경유 없음) 1회 — "이만큼 더 걸린다" 비교용
     let baseline = null;
     try {
-      const b = await predictRoute({ start, dest, waypoints: [], time, predictionType });
+      const b = await predictRoute({ start, dest, waypoints: [], time, mode });
       baseline = { totalTime: b.totalTime, totalDistance: b.totalDistance, path: b.path, timeText: fmtMinutes(b.totalTime) };
     } catch (e) {
       baseline = { error: e.message };
@@ -111,7 +112,7 @@ app.post(
     const results = [];
     for (const c of candidates) {
       try {
-        const r = await predictRoute({ start, dest, waypoints: [c], time, predictionType });
+        const r = await predictRoute({ start, dest, waypoints: [c], time, mode });
         const extra = baseline?.totalTime != null && r.totalTime != null ? r.totalTime - baseline.totalTime : null;
         results.push({
           poi: c,
@@ -142,33 +143,50 @@ app.post(
 );
 
 // ── 메뉴 2: 멀티 경유지 순서 최적화 ────────────────────────────────
-// body: { start, dest, waypoints:[...], time, predictionType }
-// TMAP routes/routeOptimization10 을 1회 호출해 TMAP 가 직접 계산한 최적 순서를 받는다.
-// (이전: 5! = 120회 브루트포스 → 현재: 1회 호출)
+// body: { start, dest, waypoints:[...], time, mode }
+// 경유지 순서 모든 조합(브루트포스, 최대 5개=120조합)을 조회해 최소 시간 순서를 찾는다.
+// mode='now' 면 후보별 1회 호출(/routes 한 방), 'future' 면 leg-split.
 app.post(
   '/api/optimize-waypoints',
   wrap(async (req, res) => {
-    const { start, dest, waypoints = [], time } = req.body;
+    const { start, dest, waypoints = [], time, mode = 'now' } = req.body;
     if (!start || !dest || waypoints.length < 1) {
       return res.status(400).json({ error: 'start, dest, 그리고 1개 이상의 waypoints 가 필요합니다.' });
     }
-    if (waypoints.length > 10) {
-      return res.status(400).json({ error: '경유지는 최대 10개까지 지원합니다.' });
+    if (waypoints.length > 5) {
+      return res.status(400).json({ error: '경유지는 최대 5개까지 지원합니다.' });
     }
 
-    const opt = await optimizeRoute({ start, dest, waypoints, time });
-    const result = {
-      order: opt.order,
-      totalTime: opt.totalTime,
-      totalDistance: opt.totalDistance,
-      path: opt.path,
-      timeText: fmtMinutes(opt.totalTime),
-    };
-    // 프론트가 results[] 와 best 를 같이 읽으므로 동일 객체로 채워 호환 유지.
-    // combinations 는 표시용으로만 의미가 있는데, 최적화 1회 호출이므로 1.
-    res.json({ best: result, results: [result], combinations: 1 });
+    const orders = permutations(waypoints);
+    const results = [];
+    for (const order of orders) {
+      try {
+        const r = await predictRoute({ start, dest, waypoints: order, time, mode });
+        results.push({ order, totalTime: r.totalTime, totalDistance: r.totalDistance, path: r.path });
+      } catch (e) {
+        results.push({ order, error: e.message });
+      }
+    }
+    // 짧은 시간 순으로 정렬
+    results.sort((a, b) => (a.totalTime ?? Infinity) - (b.totalTime ?? Infinity));
+    const best = results.find((r) => !r.error && r.totalTime != null) || null;
+    res.json({
+      best: best ? { ...best, timeText: fmtMinutes(best.totalTime) } : null,
+      results: results.map((r) => ({ ...r, timeText: fmtMinutes(r.totalTime) })),
+      combinations: orders.length,
+    });
   }),
 );
+
+function permutations(arr) {
+  if (arr.length <= 1) return [arr];
+  const out = [];
+  arr.forEach((item, i) => {
+    const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+    for (const p of permutations(rest)) out.push([item, ...p]);
+  });
+  return out;
+}
 
 // index.html 은 직접 다뤄 TMAP appKey 를 SDK 스크립트 태그로 주입한다.
 // (TMAP SDK 는 HTML 파싱 단계의 document.write 로 실제 SDK 를 가져오기 때문에

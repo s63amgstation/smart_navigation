@@ -90,51 +90,84 @@ export async function searchPois({ keyword, centerLon, centerLat, radius = 0, co
   });
 }
 
-// ── 경로 디스패처 ────────────────────────────────────────────────
-// 호출 측에서 보는 API 는 그대로 유지하면서 내부적으로 두 엔드포인트를 갈라쓴다:
+// ── 경로 조회 디스패처 ───────────────────────────────────────────
+// mode 에 따라 두 TMAP API 를 갈라 호출하지만 호출자에게 같은 shape 를 돌려준다.
+//   mode='now'    → routes (실시간 교통, passList 로 경유지 네이티브 지원) — 1회 호출
+//   mode='future' → routes/prediction (타임머신, 미래시각 startTime)
 //
-//  ┌────────────────────────────────┬──────────────────────────────┐
-//  │ 입력                           │ 내부 호출                    │
-//  ├────────────────────────────────┼──────────────────────────────┤
-//  │ 경유지 없음                    │ routes/prediction (단일 leg) │
-//  │ 경유지 있음 + 출발시각 모드    │ routes/routeSequential30 1회 │
-//  │ 경유지 있음 + 도착시각 모드    │ leg-split (sequential 가      │
-//  │                                │  startTime 만 받음 → 폴백)   │
-//  └────────────────────────────────┴──────────────────────────────┘
-//
-// 모든 케이스에서 반환 shape 는 동일: { totalTime, totalDistance, totalFare, path, legs }
-export async function predictRoute({ start, dest, waypoints = [], time, predictionType = 'departure' }) {
-  // 1) 경유지 없음 → 기존 단일 leg 예측 (변경 없음)
-  if (!waypoints.length) {
-    const leg = await predictLeg(start, dest, time, predictionType);
-    return {
-      totalTime: leg.totalTime,
-      totalDistance: leg.totalDistance,
-      totalFare: leg.totalFare,
-      path: leg.path,
-      legs: [{ totalTime: leg.totalTime, totalDistance: leg.totalDistance }],
-    };
+// 'future' + 경유지 의 경우 routes/prediction 자체가 경유지를 무시하므로 leg-split 우회.
+export async function predictRoute({ start, dest, waypoints = [], time, mode = 'now' }) {
+  if (mode === 'now') {
+    return routeNow({ start, dest, waypoints });
   }
-
-  // 2) 경유지 있고 출발시각 모드 → routeSequential30 한 방
-  if (predictionType !== 'arrival') {
-    return sequentialRoute({ start, dest, waypoints, time });
-  }
-
-  // 3) 경유지 있고 도착시각 모드 → leg-split (routeSequential30 미지원)
   return predictRouteLegSplit({ start, dest, waypoints, time });
 }
 
-// ── leg-split 폴백: 도착시각 + 경유지 케이스 전용 ────────────────
-// (routes/prediction 이 경유지를 무시하므로 구간별로 쪼개 호출, 도착시각을 거꾸로 체이닝)
+// ── 지금(실시간) 자동차 경로안내 — TMAP routes ─────────────────────
+// 한 번의 호출로 출발→경유1→...→도착 전체 경로/시간/거리를 받는다.
+// passList: "lon1,lat1_lon2,lat2_..." (언더스코어 구분)
+export async function routeNow({ start, dest, waypoints = [], searchOption = '0' }) {
+  const body = {
+    startName: start.name || '출발',
+    startX: String(start.lon),
+    startY: String(start.lat),
+    endName: dest.name || '도착',
+    endX: String(dest.lon),
+    endY: String(dest.lat),
+    reqCoordType: 'WGS84GEO',
+    resCoordType: 'WGS84GEO',
+    searchOption, // 0:교통최적+추천(기본) / 1:무료우선 / 2:최소시간 / 3:초보
+    carType: 0,
+    sort: 'index',
+  };
+  if (waypoints.length) {
+    body.passList = waypoints.map((w) => `${w.lon},${w.lat}`).join('_');
+  }
+
+  const res = await fetch(`${BASE}/routes?version=1`, {
+    method: 'POST',
+    headers: {
+      appKey: appKey(),
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`경로 조회 실패 (${res.status}): ${safeBody(text)}`);
+  }
+  if (!text) {
+    const empty = parseRoute({});
+    return { ...empty, legs: [] };
+  }
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('경로 조회 응답 파싱 실패 (본문이 JSON 이 아님)');
+  }
+  const r = parseRoute(json);
+  return {
+    totalTime: r.totalTime,
+    totalDistance: r.totalDistance,
+    totalFare: r.totalFare,
+    path: r.path,
+    legs: [],
+  };
+}
+
+// ── 예측(타임머신) 경로 — leg-split ───────────────────────────────
+// TMAP routes/prediction 이 경유지를 무시하므로 구간별로 쪼개 합산.
+// 출발시각만 지원 (도착시각 모드는 제거됨).
 async function predictRouteLegSplit({ start, dest, waypoints, time }) {
   const pts = [start, ...waypoints.slice(0, 5), dest];
   const legs = [];
-  let curArr = time;
-  for (let i = pts.length - 1; i >= 1; i--) {
-    const leg = await predictLeg(pts[i - 1], pts[i], curArr, 'arrival');
-    legs.unshift(leg);
-    curArr = leg.departureTime || curArr;
+  let curDep = time;
+  for (let i = 1; i < pts.length; i++) {
+    const leg = await predictLeg(pts[i - 1], pts[i], curDep, 'departure');
+    legs.push(leg);
+    curDep = leg.arrivalTime || curDep;
   }
   return {
     totalTime: legs.reduce((s, l) => s + (l.totalTime || 0), 0),
